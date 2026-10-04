@@ -58,6 +58,32 @@ def main() -> int:
     else:
         print("OK: planner never executes tools")
 
+    # The Executor must never evaluate arbitrary/model-generated code —
+    # AST-check that executor.py has no such call and only dispatches
+    # through the registry's execute method.
+    executor_tree = ast.parse(
+        (ROOT / "afnan_ai" / "executor.py").read_text(encoding="utf-8")
+    )
+    called_names = {
+        node.func.id
+        for node in ast.walk(executor_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    } | {
+        node.func.attr
+        for node in ast.walk(executor_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    dangerous = {"eval", "exec", "compile", "__import__", "system", "popen", "Popen"}
+    found_dangerous = sorted(dangerous & called_names)
+    if found_dangerous:
+        failures.append(f"executor evaluates code ({found_dangerous})")
+        print(f"FAIL: executor.py calls {found_dangerous} — plans must run via ToolRegistry only")
+    elif "execute" not in called_names:
+        failures.append("executor does not dispatch via registry.execute")
+        print("FAIL: executor.py does not call registry execute")
+    else:
+        print("OK: executor dispatches only via ToolRegistry, no code evaluation")
+
     for path in sorted(ROOT.rglob("*.py")):
         if ".git" in path.parts or "__pycache__" in path.parts:
             continue

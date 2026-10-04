@@ -13,6 +13,7 @@ Usage:
 """
 
 from afnan_ai.agent import AfnanAgent, create_agent
+from afnan_ai.executor import Executor
 from afnan_ai.llm import LLMProvider, OllamaProvider, create_provider, get_default_provider
 from afnan_ai.planner import Planner, TaskPlan
 from afnan_ai.platform import get_adapter
@@ -93,6 +94,23 @@ def create_plan(goal, state=None):
     """Create a structured TaskPlan for a goal, without executing
     any tool."""
     return _agent.create_plan(goal, state=state)
+
+
+def get_executor():
+    """Return the Executor (runs TaskPlans through the ToolRegistry)."""
+    return _agent.executor
+
+
+def execute_plan(plan, state=None):
+    """Execute a TaskPlan step by step through the ToolRegistry;
+    every result is recorded in AgentState and a failed step is
+    reported as failed, never as successful."""
+    return _agent.execute_plan(plan, state=state)
+
+
+def plan_and_execute(goal, state=None):
+    """Plan a goal, then execute the resulting TaskPlan."""
+    return _agent.plan_and_execute(goal, state=state)
 
 
 def listen_command(timeout=5, phrase_time=6):

@@ -20,6 +20,7 @@ import webbrowser
 from pathlib import Path
 
 from afnan_ai import speech as _speech
+from afnan_ai.executor import ExecutionReport, Executor
 from afnan_ai.llm import LLMProvider, get_default_provider
 from afnan_ai.llm.base import (
     LLMConnectionError,
@@ -63,6 +64,7 @@ class AfnanAgent:
         llm_provider: LLMProvider | None = None,
         tool_registry: ToolRegistry | None = None,
         planner: Planner | None = None,
+        executor: Executor | None = None,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -83,6 +85,9 @@ class AfnanAgent:
         # Planner uses the same LLM + tools, but only ever plans —
         # planning never executes a tool
         self.planner: Planner = planner or Planner(self.llm, self.tools)
+        # Executor runs a TaskPlan's steps through the same registry,
+        # recording every result in AgentState
+        self.executor: Executor = executor or Executor(self.tools)
         # Centralized, serializable task state.  Components may pass
         # their own AgentState, read ``agent.state``, or ignore it —
         # existing behaviour is unchanged when they do.
@@ -169,6 +174,38 @@ class AfnanAgent:
 
     # Alias matching the Planner's naming
     plan_task = create_plan
+
+    # -- execution (through the ToolRegistry, recorded in AgentState) --------
+    def execute_plan(
+        self, plan: TaskPlan, state: AgentState | None = None
+    ) -> ExecutionReport:
+        """Execute a TaskPlan's steps, one by one, through the
+        ToolRegistry and return an ExecutionReport.
+
+        Every step result is recorded in AgentState; a failed step
+        makes the report (and the task) failed — it is never
+        silently treated as successful.
+        """
+        effective_state = state if state is not None else self.state
+        if effective_state is None or effective_state.is_terminal:
+            effective_state = (
+                AgentState.create(plan.goal, task_id=plan.task_id)
+                if getattr(plan, "task_id", None)
+                else AgentState.create(plan.goal)
+            )
+        self.state = effective_state
+        report = self.executor.execute_plan(plan, state=effective_state)
+        self.state = effective_state
+        return report
+
+    def plan_and_execute(
+        self, goal: str, state: AgentState | None = None
+    ) -> ExecutionReport:
+        """Plan *goal* with the Planner, then execute the plan with
+        the Executor.  Planning errors raise PlanningError; step
+        failures come back on the ExecutionReport."""
+        plan = self.create_plan(goal, state=state)
+        return self.execute_plan(plan, state=state)
 
     def _open_url(self, url: str) -> bool:
         return self.execute_tool("open_url", {"url": url}).success
@@ -473,6 +510,7 @@ def create_agent(
     llm_provider: LLMProvider | None = None,
     tool_registry: ToolRegistry | None = None,
     planner: Planner | None = None,
+    executor: Executor | None = None,
 ) -> AfnanAgent:
     return AfnanAgent(
         adapter=adapter,
@@ -480,4 +518,5 @@ def create_agent(
         llm_provider=llm_provider,
         tool_registry=tool_registry,
         planner=planner,
+        executor=executor,
     )

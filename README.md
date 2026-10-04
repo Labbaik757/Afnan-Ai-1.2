@@ -158,6 +158,8 @@ Afnan-Ai-1.2
 │   │                         observations, tool results, status)
 │   ├── planner.py           (Planner — goal + AgentState + tools →
 │   │                         validated TaskPlan, never executes)
+│   ├── executor.py          (Executor — runs a TaskPlan step by step
+│   │                         via ToolRegistry, records AgentState)
 │   ├── llm/
 │   │   ├── base.py          (LLMProvider interface + typed errors)
 │   │   ├── ollama.py        (OllamaProvider — local Ollama, llama3)
@@ -375,6 +377,56 @@ model, empty goal, no tools) and the never-executes-tools
 guarantee live in `tests/test_planner.py`.
 `tools/check_compatibility.py` additionally AST-checks that
 `planner.py` contains no tool-execution call.
+
+# ⚙️ Executor — Running a TaskPlan
+
+`afnan_ai/executor.py` carries out a `TaskPlan` produced by the
+Planner.  For every step, in order, the `Executor`:
+
+1. checks the named tool **exists** in the ToolRegistry,
+2. **validates the step's arguments** against that tool's input schema,
+3. executes the tool **through the ToolRegistry only**, and
+4. records the result (tool result + completed/failed step) in `AgentState`.
+
+```python
+from afnan_ai.executor import Executor
+
+executor = Executor(agent.tools, state=agent.state)  # or: agent.executor
+report = executor.execute_plan(plan)
+
+report.success                 # True only if every step really worked
+report.status                  # "completed" / "failed"
+report.step_results[0].output  # the tool's real output
+report.step_results[0].error   # structured ToolError dict on failure
+agent.state.status             # completed / failed — results are recorded
+```
+
+Two safety rules are enforced and tested:
+
+- **A failed action is never silently successful.** An unknown tool
+  (`tool_not_found`), bad arguments (`missing_arguments` /
+  `invalid_arguments`), a crashing tool (`execution_failed`) — each
+  makes that step `success=False`, fails the task in `AgentState`,
+  and by default stops the plan so later steps are reported as
+  `skipped`, not as done. (`Executor(..., stop_on_failure=False)`
+  attempts every step, but the report is still `failed`.)
+- **No arbitrary code execution.** A plan step can only name an
+  already-registered tool; tool names and arguments are treated
+  strictly as data, never as Python code, a shell command or an
+  import. `tools/check_compatibility.py` AST-checks that
+  `executor.py` dispatches only via `registry.execute(...)`.
+
+The agent ties both halves together:
+
+```python
+agent.execute_plan(plan)                    # execute an existing plan
+report = agent.plan_and_execute("Open Chrome and search for Python")
+```
+
+Tests for successful execution, failed and crashing tools,
+invalid tools, invalid arguments, skipped steps, AgentState
+updates and the no-arbitrary-code guarantee live in
+`tests/test_executor.py`.
 
 # ✅ Compatibility Tests
 
