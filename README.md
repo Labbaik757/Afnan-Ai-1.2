@@ -156,6 +156,8 @@ Afnan-Ai-1.2
 │   │                         direct model-client calls)
 │   ├── state.py             (centralized AgentState — goal, steps,
 │   │                         observations, tool results, status)
+│   ├── planner.py           (Planner — goal + AgentState + tools →
+│   │                         validated TaskPlan, never executes)
 │   ├── llm/
 │   │   ├── base.py          (LLMProvider interface + typed errors)
 │   │   ├── ollama.py        (OllamaProvider — local Ollama, llama3)
@@ -322,6 +324,57 @@ details))`, with matching exception forms (`ToolNotFoundError`,
 Tests for registration, dynamic lookup, execution, invalid tools,
 missing/invalid arguments and execution failures live in
 `tests/test_tool_registry.py`.
+
+# 🗺️ Planner — Structured Task Plans (No Execution)
+
+`afnan_ai/planner.py` contains a `Planner` that turns a user goal,
+the current `AgentState` and the registered tools into a
+structured `TaskPlan` — and nothing more.  The Planner never
+executes a tool; it only reads tool definitions from the
+`ToolRegistry` to know what it may plan with.
+
+```python
+from afnan_ai.planner import Planner
+
+planner = Planner(agent.llm, agent.tools)   # or: agent.planner
+plan = planner.plan("Open Chrome and search for Python", state=agent.state)
+
+plan.goal            # "Open Chrome and search for Python"
+plan.steps[0].step_id         # "step_1"
+plan.steps[0].description     # "Open the Chrome browser"
+plan.steps[0].tool_name       # "open_application"
+plan.steps[0].arguments       # {"application": "chrome"}  (schema-validated)
+plan.steps[0].expected_result # "Chrome is launched"
+data = plan.to_json()         # TaskPlan.from_json(data) restores it
+```
+
+The LLM (through the `LLMProvider` interface, Ollama by default)
+is asked to reply with exactly one JSON object
+`{"goal": ..., "steps": [...]}` and that output is validated
+strictly before a plan is returned: valid JSON, exactly the
+required fields on every step (`step_id`, `description`,
+`tool_name`, `arguments`, `expected_result`), unique `step_id`
+values, `tool_name` must be one of the available tools, and
+`arguments` must satisfy that tool's input schema.
+
+Invalid or failed planning is handled safely with structured
+`PlanningError`s — never a bare crash and never a half-valid plan:
+non-JSON output (`invalid_llm_output`), an unknown tool or bad
+arguments (`invalid_plan`), an unreachable model
+(`llm_connection_failed`), a missing model (`llm_unavailable`),
+an empty goal (`empty_goal`) or no tools to plan with
+(`no_tools_available`).  The agent exposes the same thing as
+`agent.create_plan(goal)` (and `main.create_plan(goal)`); a
+successful plan is recorded in `AgentState` as an observation,
+which is bookkeeping, not execution.
+
+Tests for successful planning, invalid LLM output (bad JSON,
+missing/extra fields, unknown tool, bad arguments, duplicate
+`step_id`), failed planning (connection failure, unavailable
+model, empty goal, no tools) and the never-executes-tools
+guarantee live in `tests/test_planner.py`.
+`tools/check_compatibility.py` additionally AST-checks that
+`planner.py` contains no tool-execution call.
 
 # ✅ Compatibility Tests
 

@@ -28,6 +28,7 @@ from afnan_ai.llm.base import (
 )
 from afnan_ai.platform import get_adapter
 from afnan_ai.platform.base import PlatformAdapter
+from afnan_ai.planner import Planner, TaskPlan
 from afnan_ai.state import AgentState
 from afnan_ai.tools import ToolRegistry, ToolResult, create_default_registry
 
@@ -61,6 +62,7 @@ class AfnanAgent:
         track_state: bool = True,
         llm_provider: LLMProvider | None = None,
         tool_registry: ToolRegistry | None = None,
+        planner: Planner | None = None,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -78,6 +80,9 @@ class AfnanAgent:
         self.llm: LLMProvider = llm_provider or get_default_provider()
         # Backwards-compatible alias
         self.llm_provider = self.llm
+        # Planner uses the same LLM + tools, but only ever plans —
+        # planning never executes a tool
+        self.planner: Planner = planner or Planner(self.llm, self.tools)
         # Centralized, serializable task state.  Components may pass
         # their own AgentState, read ``agent.state``, or ignore it —
         # existing behaviour is unchanged when they do.
@@ -140,6 +145,30 @@ class AfnanAgent:
 
     def list_tools(self):
         return self.tools.definitions()
+
+    # -- planning (never executes tools) -------------------------------------
+    def create_plan(
+        self, goal: str, state: AgentState | None = None
+    ) -> TaskPlan:
+        """Create a structured TaskPlan for *goal* without executing
+        any tool.  Raises PlanningError on invalid/failed planning.
+
+        The plan is recorded in AgentState as an observation (and in
+        its metadata) — recording is not execution.
+        """
+        effective_state = state if state is not None else self.state
+        plan = self.planner.plan(goal, state=effective_state)
+        if self.track_state and effective_state is not None:
+            effective_state.add_observation(
+                f"Plan created for goal: {goal} "
+                f"({len(plan.steps)} step(s))",
+                source="planner",
+            )
+            effective_state.metadata["last_plan"] = plan.to_dict()
+        return plan
+
+    # Alias matching the Planner's naming
+    plan_task = create_plan
 
     def _open_url(self, url: str) -> bool:
         return self.execute_tool("open_url", {"url": url}).success
@@ -443,10 +472,12 @@ def create_agent(
     state: AgentState | None = None,
     llm_provider: LLMProvider | None = None,
     tool_registry: ToolRegistry | None = None,
+    planner: Planner | None = None,
 ) -> AfnanAgent:
     return AfnanAgent(
         adapter=adapter,
         state=state,
         llm_provider=llm_provider,
         tool_registry=tool_registry,
+        planner=planner,
     )

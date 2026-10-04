@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from afnan_ai.platform import get_adapter  # noqa: E402
+from afnan_ai.planner import Planner  # noqa: E402
 from afnan_ai.tools import create_default_registry  # noqa: E402
 
 
@@ -35,6 +36,27 @@ def main() -> int:
         print(f"FAIL: tool registry missing {missing_tools}")
     else:
         print(f"OK: tool registry has {registry.names()}")
+
+    # The Planner must never execute tools — guard the core promise
+    # statically so a future refactor cannot silently break it.
+    # (AST-based, so docstrings/comments mentioning execution are fine.)
+    import ast
+
+    assert isinstance(Planner, type)
+    planner_tree = ast.parse(
+        (ROOT / "afnan_ai" / "planner.py").read_text(encoding="utf-8")
+    )
+    forbidden_calls = [
+        node.func.attr
+        for node in ast.walk(planner_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr in ("execute", "execute_or_raise", "run")
+    ]
+    if forbidden_calls:
+        failures.append(f"planner executes tools ({forbidden_calls})")
+        print(f"FAIL: planner.py calls {forbidden_calls} — Planner must only plan")
+    else:
+        print("OK: planner never executes tools")
 
     for path in sorted(ROOT.rglob("*.py")):
         if ".git" in path.parts or "__pycache__" in path.parts:

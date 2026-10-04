@@ -14,6 +14,7 @@ Usage:
 
 from afnan_ai.agent import AfnanAgent, create_agent
 from afnan_ai.llm import LLMProvider, OllamaProvider, create_provider, get_default_provider
+from afnan_ai.planner import Planner, TaskPlan
 from afnan_ai.platform import get_adapter
 from afnan_ai.state import AgentState
 from afnan_ai.tools import Tool, ToolRegistry, create_default_registry
@@ -81,6 +82,17 @@ def execute_tool(name, arguments=None, **kwargs):
     """Execute a registered tool; failures come back as a
     structured ToolResult (success=False, error=ToolError)."""
     return _agent.execute_tool(name, arguments, **kwargs)
+
+
+def get_planner():
+    """Return the Planner (plans only — it never executes tools)."""
+    return _agent.planner
+
+
+def create_plan(goal, state=None):
+    """Create a structured TaskPlan for a goal, without executing
+    any tool."""
+    return _agent.create_plan(goal, state=state)
 
 
 def listen_command(timeout=5, phrase_time=6):
