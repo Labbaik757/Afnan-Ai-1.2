@@ -143,6 +143,13 @@ def run_task(goal, state=None, max_iterations=None):
     return _agent.run_task(goal, state=state, max_iterations=max_iterations)
 
 
+def get_recovery():
+    """Return the RecoveryManager used by the orchestrator
+    (replans after failed/uncertain steps, attempts recorded
+    in AgentState)."""
+    return _agent.recovery
+
+
 def listen_command(timeout=5, phrase_time=6):
     return _agent.listen_command(timeout=timeout, phrase_time=phrase_time)
 
@@ -155,8 +162,16 @@ def take_screenshot():
     return _agent.take_screenshot()
 
 
+def handle_request(request):
+    """Handle one natural-language request (voice-transcribed or
+    typed).  The actual task handling is delegated to the central
+    Agent orchestrator (Agent.run()); this wrapper adds no
+    planning/execution/verification/recovery logic of its own."""
+    return _agent.handle_request(request)
+
+
 def process_command(command):
-    _agent.process_command(command)
+    return _agent.process_command(command)
 
 
 def start_afnan():

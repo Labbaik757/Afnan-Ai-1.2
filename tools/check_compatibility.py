@@ -140,6 +140,37 @@ def main() -> int:
     else:
         print("OK: orchestrator dispatches only via Executor, no direct tool/platform calls")
 
+    # The RecoveryManager must only re-plan — AST-check that
+    # recovery.py never executes a tool and only asks the Planner.
+    recovery_tree = ast.parse(
+        (ROOT / "afnan_ai" / "recovery.py").read_text(encoding="utf-8")
+    )
+    recovery_attr_calls = {
+        node.func.attr
+        for node in ast.walk(recovery_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    recovery_name_calls = {
+        node.func.id
+        for node in ast.walk(recovery_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    forbidden_recovery = {
+        "execute", "execute_or_raise", "launch_app", "open_path",
+        "speak_system", "eval", "exec", "compile", "__import__",
+    }
+    found_recovery = sorted(
+        forbidden_recovery & (recovery_attr_calls | recovery_name_calls)
+    )
+    if found_recovery:
+        failures.append(f"recovery executes tools ({found_recovery})")
+        print(f"FAIL: recovery.py calls {found_recovery} — Recovery must only re-plan via the Planner")
+    elif "plan" not in recovery_attr_calls:
+        failures.append("recovery never calls Planner.plan")
+        print("FAIL: recovery.py does not replan through Planner.plan")
+    else:
+        print("OK: recovery only replans via Planner, never executes tools")
+
     for path in sorted(ROOT.rglob("*.py")):
         if ".git" in path.parts or "__pycache__" in path.parts:
             continue

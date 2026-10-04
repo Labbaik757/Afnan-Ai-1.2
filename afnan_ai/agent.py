@@ -28,7 +28,7 @@ from afnan_ai.llm.base import (
     LLMUnavailableError,
 )
 from afnan_ai.orchestrator import Agent as OrchestratorAgent
-from afnan_ai.orchestrator import OrchestrationResult
+from afnan_ai.orchestrator import OrchestrationResult, OrchestrationStatus
 from afnan_ai.platform import get_adapter
 from afnan_ai.platform.base import PlatformAdapter
 from afnan_ai.planner import Planner, TaskPlan
@@ -71,6 +71,7 @@ class AfnanAgent:
         verifier: Verifier | None = None,
         orchestrator: OrchestratorAgent | None = None,
         max_iterations: int = OrchestratorAgent.DEFAULT_MAX_ITERATIONS,
+        max_recovery_attempts: int = 2,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -108,7 +109,11 @@ class AfnanAgent:
             executor=self.executor,
             verifier=self.verifier,
             max_iterations=max_iterations,
+            max_recovery_attempts=max_recovery_attempts,
         )
+        # Recovery manager (owned by the orchestrator): replans
+        # after failed/uncertain steps, attempts recorded in state
+        self.recovery = self.orchestrator.recovery
         # Centralized, serializable task state.  Components may pass
         # their own AgentState, read ``agent.state``, or ignore it —
         # existing behaviour is unchanged when they do.
@@ -480,10 +485,116 @@ What do you want me to do?
             return None
         return result.output
 
-    # -- command routing (existing behaviour preserved) ---------------------------
-    def process_command(self, command: str) -> None:
-        raw_command = command or ""
-        command = raw_command.lower().strip()
+    # -- user requests (voice-transcribed or typed) -------------------------
+    def handle_request(self, request: str) -> OrchestrationResult | None:
+        """Handle one natural-language user request.
+
+        This is the single entry point for everything the user
+        says after the wake word or types as text: the actual task
+        handling is delegated to the central Agent orchestrator
+        (``Agent.run()`` — state → plan → execute → verify →
+        recover/complete).  No planning, execution, verification
+        or recovery logic lives here.
+
+        Preserved behaviour around that delegation:
+
+        * session-control requests ("stop afnan", "introduce
+          yourself") are not tasks and are handled directly;
+        * if the model cannot plan at all (e.g. it is offline),
+          the request falls back to the isolated legacy routing
+          below, so every existing command keeps working;
+        * the outcome is spoken back through the usual TTS path.
+
+        Returns the OrchestrationResult for orchestrated requests,
+        or None when a session/legacy path handled the request.
+        ("stop afnan" still raises SystemExit, as before.)
+        """
+        text = (request or "").strip()
+        if not text:
+            return None
+        lowered = text.lower()
+
+        # 1) Session control — preserved, handled directly
+        if (
+            "stop afnan" in lowered
+            or "tell me about yourself" in lowered
+            or "introduce yourself" in lowered
+            or "who are you" in lowered
+        ):
+            self._handle_legacy_command(lowered)
+            return None
+
+        # 2) Delegate the actual task to the central Agent.  The
+        # orchestrator runs with its own task state; the assistant's
+        # session state is only adopted once a plan actually
+        # exists, so a planning failure (e.g. model offline) leaves
+        # the session untouched for the legacy fallback below.
+        result = self.orchestrator.run(text)
+        if result.status == OrchestrationStatus.PLANNING_FAILED:
+            # The model could not plan (offline, invalid output…).
+            # Fall back to the isolated legacy routing so existing
+            # behaviour survives; if nothing matches there, use
+            # the original conversational AI fallback.
+            if self._handle_legacy_command(lowered):
+                return None
+            self._legacy_chat_fallback(lowered)
+            return None
+
+        self.state = result.state
+        if result.success:
+            self.speak("Done boss")
+        else:
+            self.speak("Sorry boss, I could not complete that task")
+        return result
+
+    def process_command(self, command: str) -> OrchestrationResult | None:
+        """Backwards-compatible name for :meth:`handle_request`.
+
+        Existing callers (the voice loop, ``main.process_command``,
+        scripts and tests) keep working unchanged; the request is
+        handled by the central Agent orchestrator with the legacy
+        routing as an isolated fallback.
+        """
+        return self.handle_request(command)
+
+    # -- LEGACY direct routing (isolated, not yet migrated to tools) --------
+    # The command patterns below predate the Tool system.  Some of
+    # them use capabilities that do not exist as Tools yet (opening
+    # a folder by name, playing a song, the introduction), so they
+    # are kept here — clearly isolated — instead of being broken.
+    # Each one should move into a Tool over time; until then this
+    # handler is used for session control and as the fallback when
+    # the model cannot plan.  It deliberately contains no planning,
+    # verification or recovery logic.
+    @staticmethod
+    def _is_legacy_command(command: str) -> bool:
+        return (
+            "open visual studio code" in command
+            or "open vs code" in command
+            or "open safari" in command
+            or "open chrome" in command
+            or "open google chrome" in command
+            or "open edge" in command
+            or "open microsoft edge" in command
+            or "open youtube" in command
+            or "open whatsapp" in command
+            or "tell me about yourself" in command
+            or "introduce yourself" in command
+            or "who are you" in command
+            or ("folder" in command and command.startswith("open"))
+            or "search youtube for" in command
+            or "search google for" in command
+            or command.startswith("play ")
+            or "screenshot" in command
+            or "stop afnan" in command
+        )
+
+    def _handle_legacy_command(self, command: str) -> bool:
+        """Run one legacy direct command.  Returns True when a
+        known pattern matched (including the stop command, which
+        raises SystemExit as it always has)."""
+        if not self._is_legacy_command(command):
+            return False
         self._state_begin(command)
         try:
             if "open visual studio code" in command or "open vs code" in command:
@@ -551,17 +662,29 @@ What do you want me to do?
                 self.speak("Goodbye boss")
                 raise SystemExit
 
-            else:
-                self.speak("Thinking boss")
-                reply = self.ask_local_ai(command)
-                self.speak(reply)
-
             self._state_succeed(result="ok")
+            return True
 
         except SystemExit:
             # "stop afnan" is a successful stop, not a failure
             self._state_succeed(result="stopped")
             raise
+        except Exception as e:
+            print("Command Error:", e)
+            self._state_fail(str(e))
+            self.speak("Error boss")
+            return True
+
+    def _legacy_chat_fallback(self, command: str) -> None:
+        """The original conversational fallback: no known command
+        matched, so the request is answered by the LLM provider
+        directly (preserved exactly as before)."""
+        self._state_begin(command)
+        try:
+            self.speak("Thinking boss")
+            reply = self.ask_local_ai(command)
+            self.speak(reply)
+            self._state_succeed(result="ok")
         except Exception as e:
             print("Command Error:", e)
             self._state_fail(str(e))
@@ -599,6 +722,7 @@ def create_agent(
     verifier: Verifier | None = None,
     orchestrator: OrchestratorAgent | None = None,
     max_iterations: int = OrchestratorAgent.DEFAULT_MAX_ITERATIONS,
+    max_recovery_attempts: int = 2,
 ) -> AfnanAgent:
     return AfnanAgent(
         adapter=adapter,
@@ -610,4 +734,5 @@ def create_agent(
         verifier=verifier,
         orchestrator=orchestrator,
         max_iterations=max_iterations,
+        max_recovery_attempts=max_recovery_attempts,
     )

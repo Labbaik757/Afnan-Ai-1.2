@@ -31,6 +31,15 @@ Safety & lifecycle rules
   never as done.  An *uncertain* verification is recorded but does
   not block an otherwise successful execution (unless
   ``strict_verification=True``).
+* **Recovery is bounded, never a blind retry.**  After a failed
+  or uncertain step, the Recovery mechanism
+  (:class:`~afnan_ai.recovery.RecoveryManager`) hands the failure
+  reason, the current AgentState and the previous attempt to the
+  Planner and asks for a *different* plan.  A recovery plan that
+  would repeat an already-failed action is rejected, recovery is
+  capped by ``max_recovery_attempts`` (default 2), every attempt
+  is recorded in AgentState, and recovered steps still count
+  against the same maximum-iteration limit.
 * **No responsibility is duplicated.**  The Agent plans only via
   the Planner, executes only via the Executor (which alone talks
   to the ToolRegistry) and judges only via the Verifier.  It holds
@@ -56,6 +65,7 @@ from afnan_ai.executor import (
     StepExecutionResult,
 )
 from afnan_ai.planner import Planner, PlanningError, TaskPlan
+from afnan_ai.recovery import RecoveryError, RecoveryManager
 from afnan_ai.state import AgentState, TaskStatus
 from afnan_ai.verifier import (
     VerificationReport,
@@ -110,6 +120,7 @@ class OrchestrationResult:
     max_iterations: int = 10
     error: dict[str, Any] | None = None
     records: list[IterationRecord] = field(default_factory=list)
+    recovery_attempts: list[dict[str, Any]] = field(default_factory=list)
     started_at: str | None = None
     finished_at: str | None = None
 
@@ -135,6 +146,7 @@ class OrchestrationResult:
                 self.verification.to_dict() if self.verification else None
             ),
             "records": [r.to_dict() for r in self.records],
+            "recovery_attempts": list(self.recovery_attempts),
             "error": self.error,
             "state": self.state.summary(),
             "started_at": self.started_at,
@@ -171,6 +183,9 @@ class Agent:
         state: AgentState | None = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         strict_verification: bool = False,
+        recovery: RecoveryManager | None = None,
+        max_recovery_attempts: int = RecoveryManager.DEFAULT_MAX_ATTEMPTS,
+        recover_on_uncertain: bool = True,
     ):
         if planner is None or executor is None or verifier is None:
             raise ValueError(
@@ -182,6 +197,16 @@ class Agent:
         self.state: AgentState | None = state
         self.max_iterations = self._validate_limit(max_iterations)
         self.strict_verification = bool(strict_verification)
+        # Recovery: after a failed/uncertain step the Planner is
+        # asked for a *different* plan (never a blind repeat).  The
+        # manager plans only; execution/verification stay with the
+        # Executor/Verifier, and every attempt is recorded in
+        # AgentState.  max_recovery_attempts=0 disables recovery.
+        self.recovery: RecoveryManager = recovery or RecoveryManager(
+            planner, max_attempts=max_recovery_attempts
+        )
+        self.max_recovery_attempts = self.recovery.max_attempts
+        self.recover_on_uncertain = bool(recover_on_uncertain)
 
     @staticmethod
     def _validate_limit(value: int) -> int:
@@ -200,6 +225,8 @@ class Agent:
         state: AgentState | None = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         strict_verification: bool = False,
+        max_recovery_attempts: int = RecoveryManager.DEFAULT_MAX_ATTEMPTS,
+        recover_on_uncertain: bool = True,
     ) -> "Agent":
         """Build an Agent (and its Planner/Executor/Verifier) from a
         raw LLM provider + ToolRegistry — handy outside AfnanAgent."""
@@ -210,6 +237,8 @@ class Agent:
             state=state,
             max_iterations=max_iterations,
             strict_verification=strict_verification,
+            max_recovery_attempts=max_recovery_attempts,
+            recover_on_uncertain=recover_on_uncertain,
         )
 
     # -- main entry point -------------------------------------------------
@@ -272,13 +301,24 @@ class Agent:
             source="agent",
         )
 
-        # 2) Execute → verify, one step at a time ----------------------------
+        # 2) Execute → verify, one step at a time, with recovery ------
+        # When a step fails (or cannot be verified), the Recovery
+        # mechanism asks the Planner for a *different* plan instead
+        # of blindly repeating the failed action.  Recovery is
+        # bounded twice: by max_recovery_attempts and by the same
+        # overall iteration limit (recovered steps still count).
         executed: list[StepExecutionResult] = []
         verifications: list[VerificationResult] = []
         failure_error: dict[str, Any] | None = None
         outcome = OrchestrationStatus.COMPLETED
+        recovery_attempts_used = 0
+        attempts_before = len(self.recovery.attempts)
 
-        for index, step in enumerate(plan.steps):
+        current_plan = plan
+        step_index = 0
+        remaining: list = []
+        while step_index < len(current_plan.steps):
+            step = current_plan.steps[step_index]
             if result.iterations >= limit:
                 outcome = OrchestrationStatus.MAX_ITERATIONS_EXCEEDED
                 failure_error = {
@@ -286,19 +326,21 @@ class Agent:
                     "message": (
                         f"Maximum iteration limit ({limit}) reached; "
                         f"step {step.step_id!r} and the remaining "
-                        f"{len(plan.steps) - index} step(s) were not executed"
+                        f"{len(current_plan.steps) - step_index} step(s) "
+                        f"were not executed"
                     ),
                     "details": {
                         "max_iterations": limit,
                         "next_step": step.step_id,
                     },
                 }
+                remaining = list(current_plan.steps[step_index:])
                 break
 
             result.iterations += 1
             try:
                 execution_result = self.executor.execute_step(
-                    step, state=task_state, plan_id=plan.plan_id
+                    step, state=task_state, plan_id=current_plan.plan_id
                 )
             except Exception as e:
                 # Executor raises only for a malformed step; record
@@ -325,7 +367,7 @@ class Agent:
                     step.tool_name,
                     success=False,
                     error=str(e),
-                    metadata={"step_id": step.step_id, "plan_id": plan.plan_id},
+                    metadata={"step_id": step.step_id, "plan_id": current_plan.plan_id},
                 )
                 task_state.fail_step(step.step_id, str(e))
 
@@ -354,45 +396,111 @@ class Agent:
                 source="agent",
             )
 
+            # Does this step need recovery?
+            trigger: str | None = None
+            trigger_error: dict[str, Any] | None = None
+            fatal = True
             if not execution_result.success:
-                outcome = OrchestrationStatus.FAILED
-                failure_error = execution_result.error or {
+                trigger = "execution_failed"
+                trigger_error = execution_result.error or {
                     "code": "execution_failed",
                     "message": f"Step {step.step_id!r} failed",
                 }
-                break
-            if (
+            elif (
                 verification_result is not None
                 and verification_result.status == VerificationStatus.FAILED
             ):
-                # A verified-wrong outcome is a task failure: the
-                # action ran, but not the action that was expected.
-                outcome = OrchestrationStatus.FAILED
-                failure_error = {
+                # A verified-wrong outcome is a task failure unless
+                # recovery finds a better way: the action ran, but
+                # not the action that was expected.
+                trigger = "verification_failed"
+                trigger_error = {
                     "code": "verification_failed",
                     "message": verification_result.reason,
                     "details": {"step_id": step.step_id},
                 }
-                break
-            if (
-                self.strict_verification
-                and verification_result is not None
+            elif (
+                verification_result is not None
                 and verification_result.status == VerificationStatus.UNCERTAIN
+                and (self.recover_on_uncertain or self.strict_verification)
             ):
-                outcome = OrchestrationStatus.FAILED
-                failure_error = {
+                trigger = "verification_uncertain"
+                trigger_error = {
                     "code": "verification_uncertain",
                     "message": (
-                        f"Step {step.step_id!r} could not be verified "
-                        f"and strict_verification is on: "
+                        f"Step {step.step_id!r} could not be verified: "
                         f"{verification_result.reason}"
                     ),
                     "details": {"step_id": step.step_id},
                 }
-                break
+                # Uncertain alone is not fatal (unless strict): if
+                # recovery cannot improve it, the original plan
+                # continues rather than failing the whole task.
+                fatal = self.strict_verification
+
+            if trigger is None:
+                step_index += 1
+                continue
+
+            # -- recovery: ask the Planner for a different plan ------
+            reason = str(trigger_error.get("message") or trigger)
+            recovered = False
+            recovery_error: dict[str, Any] | None = None
+            if (
+                self.recovery.enabled
+                and recovery_attempts_used < self.recovery.max_attempts
+            ):
+                recovery_attempts_used += 1
+                try:
+                    new_plan = self.recovery.plan_recovery(
+                        goal=goal,
+                        state=task_state,
+                        failed_step=step,
+                        reason=reason,
+                        trigger=trigger,
+                        attempt=recovery_attempts_used,
+                    )
+                except RecoveryError as e:
+                    recovery_error = e.to_dict()
+                else:
+                    current_plan = new_plan
+                    task_state.metadata["current_plan"] = new_plan.to_dict()
+                    task_state.add_observation(
+                        f"Agent switching to recovery plan "
+                        f"{new_plan.plan_id} ({len(new_plan.steps)} "
+                        f"step(s)) after step {step.step_id} "
+                        f"({trigger})",
+                        source="agent",
+                    )
+                    step_index = 0
+                    recovered = True
+
+            if recovered:
+                continue
+            if not fatal:
+                # Uncertain step, recovery unavailable/failed: keep
+                # the original plan going (the uncertainty stays
+                # recorded in AgentState and the verification report)
+                step_index += 1
+                continue
+
+            outcome = OrchestrationStatus.FAILED
+            failure_error = dict(trigger_error)
+            details = dict(failure_error.get("details") or {})
+            details["recovery_attempts"] = recovery_attempts_used
+            if recovery_error is not None:
+                details["recovery"] = recovery_error
+            elif recovery_attempts_used >= self.recovery.max_attempts > 0:
+                details["recovery_exhausted"] = True
+            failure_error["details"] = details
+            remaining = list(current_plan.steps[step_index + 1:])
+            break
+
+        result.recovery_attempts = [
+            a.to_dict() for a in self.recovery.attempts[attempts_before:]
+        ]
 
         # Remaining steps (after failure / limit) are skipped, not done
-        remaining = plan.steps[len(executed):]
         skipped_results = [
             StepExecutionResult(
                 step_id=s.step_id,

@@ -257,11 +257,17 @@ class Planner:
         *,
         state: AgentState | None = None,
         tools: ToolRegistry | Iterable[Tool] | None = None,
+        recovery_context: str | None = None,
     ) -> TaskPlan:
         """Return a validated TaskPlan for *goal*.
 
         Raises PlanningError (structured) on an empty goal, no
         available tools, an LLM failure, or invalid LLM output.
+
+        ``recovery_context`` is optional extra guidance (used by
+        the Recovery mechanism) describing a previous failed or
+        uncertain attempt; it is added to the prompt so the new
+        plan can avoid repeating the action that already failed.
         """
         if not goal or not str(goal).strip():
             raise PlanningError(
@@ -278,7 +284,12 @@ class Planner:
                 code=PlannerErrorCode.NO_TOOLS_AVAILABLE,
             )
 
-        prompt = self.build_prompt(goal, state=state, catalog=catalog)
+        prompt = self.build_prompt(
+            goal,
+            state=state,
+            catalog=catalog,
+            recovery_context=recovery_context,
+        )
         raw = self._ask_llm(prompt)
         return self.parse_plan(raw, goal=goal, state=state, catalog=catalog)
 
@@ -294,6 +305,7 @@ class Planner:
         state: AgentState | None = None,
         tools: ToolRegistry | Iterable[Tool] | None = None,
         catalog: dict[str, dict[str, Any]] | None = None,
+        recovery_context: str | None = None,
     ) -> str:
         catalog = catalog or self._catalog(
             self._as_registry(tools) or self.tools
@@ -326,12 +338,27 @@ class Planner:
             }
             state_text = json.dumps(summary, ensure_ascii=False)
 
+        recovery_text = ""
+        if recovery_context:
+            recovery_text = (
+                "\nRecovery context (a previous attempt did not "
+                "succeed):\n"
+                f"{recovery_context}\n"
+                "Your new plan must still achieve the user's goal, "
+                "but it must NOT repeat the failed action with the "
+                "same tool and the same arguments. Choose a "
+                "different tool, different arguments, or a "
+                "different approach, and build on the steps that "
+                "already completed.\n"
+            )
+
         return (
             "You are the planning component of Afnan AI. "
             "Create a plan only — do not execute anything and do not "
             "claim that any action has been taken.\n\n"
             f"User goal: {goal}\n\n"
-            f"Current agent state:\n{state_text}\n\n"
+            f"Current agent state:\n{state_text}\n"
+            f"{recovery_text}\n"
             f"Available tools (use only these tool_name values):\n"
             f"{tools_text}\n\n"
             "Reply with exactly one JSON object and no other text, "
