@@ -8,7 +8,10 @@ lives in this module — that is the adapter's job.
 
 from __future__ import annotations
 
+from afnan_ai.log_config import get_logger
 from afnan_ai.platform.base import PlatformAdapter
+
+logger = get_logger(__name__)
 
 _engine = None
 
@@ -21,7 +24,7 @@ def speak(text: str, adapter: PlatformAdapter) -> None:
         try:
             adapter.speak_system(text)
         except Exception as e:
-            print("Speech Error:", e)
+            logger.warning("speech failed: %s", e)
 
 
 def _speak_with_pyttsx3(text: str) -> None:

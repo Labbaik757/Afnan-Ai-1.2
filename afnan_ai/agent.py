@@ -20,8 +20,10 @@ import webbrowser
 from pathlib import Path
 
 from afnan_ai import speech as _speech
+from afnan_ai.config import AgentConfig
 from afnan_ai.executor import ExecutionReport, Executor
 from afnan_ai.llm import LLMProvider, get_default_provider
+from afnan_ai.log_config import get_logger
 from afnan_ai.llm.base import (
     LLMConnectionError,
     LLMInvalidResponseError,
@@ -54,6 +56,8 @@ except Exception:
 
 GIF_PATH = "afnan_animation.gif"
 
+logger = get_logger(__name__)
+
 
 class AfnanAgent:
     """Platform-agnostic voice assistant."""
@@ -70,8 +74,9 @@ class AfnanAgent:
         executor: Executor | None = None,
         verifier: Verifier | None = None,
         orchestrator: OrchestratorAgent | None = None,
-        max_iterations: int = OrchestratorAgent.DEFAULT_MAX_ITERATIONS,
-        max_recovery_attempts: int = 2,
+        max_iterations: int | None = None,
+        max_recovery_attempts: int | None = None,
+        config: AgentConfig | None = None,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -103,13 +108,26 @@ class AfnanAgent:
         # complete task lifecycle (goal → plan → step-by-step
         # execute/verify → completion), capped by max_iterations.
         # Voice commands keep their existing direct behaviour.
-        self.max_iterations = max_iterations
+        # Central configuration (wake word, limits, default
+        # model...).  Explicit arguments win over the config.
+        self.config = config or AgentConfig()
+        resolved_iterations = (
+            max_iterations
+            if max_iterations is not None
+            else self.config.max_iterations
+        )
+        resolved_recovery = (
+            max_recovery_attempts
+            if max_recovery_attempts is not None
+            else self.config.max_recovery_attempts
+        )
+        self.max_iterations = resolved_iterations
         self.orchestrator: OrchestratorAgent = orchestrator or OrchestratorAgent(
             planner=self.planner,
             executor=self.executor,
             verifier=self.verifier,
-            max_iterations=max_iterations,
-            max_recovery_attempts=max_recovery_attempts,
+            max_iterations=resolved_iterations,
+            max_recovery_attempts=resolved_recovery,
         )
         # Recovery manager (owned by the orchestrator): replans
         # after failed/uncertain steps, attempts recorded in state
@@ -317,7 +335,8 @@ class AfnanAgent:
         _speech.speak(text, self.adapter)
 
     # -- startup animation ---------------------------------------------
-    def show_startup_gif(self, gif_path: str = GIF_PATH) -> None:
+    def show_startup_gif(self, gif_path: str | None = None) -> None:
+        gif_path = gif_path or self.config.gif_path
         try:
             gif_absolute_path = os.path.abspath(gif_path)
             if not os.path.exists(gif_absolute_path):
@@ -385,7 +404,7 @@ What do you want me to do?
             else:
                 self.speak("Folder not found boss")
         except Exception as e:
-            print("Folder Search Error:", e)
+            logger.error("folder search failed: %s", e)
             self.speak("Error while opening folder")
 
     # -- AI (through the LLMProvider interface only) -----------------------
@@ -408,14 +427,14 @@ What do you want me to do?
                 f"{provider.display_name} is not installed."
             )
         except (LLMConnectionError, LLMInvalidResponseError) as e:
-            print(f"{provider.display_name} Error:", e)
+            logger.error("%s provider failed: %s", provider.display_name, e)
             self._record_llm_failure(provider, str(e))
             return (
                 f"Sorry boss, AI is not responding. "
                 f"Make sure {provider.display_name} is running."
             )
         except Exception as e:  # provider broke the interface contract
-            print(f"{provider.display_name} Error:", e)
+            logger.error("%s provider failed: %s", provider.display_name, e)
             self._record_llm_failure(provider, str(e))
             return (
                 f"Sorry boss, AI is not responding. "
@@ -670,7 +689,7 @@ What do you want me to do?
             self._state_succeed(result="stopped")
             raise
         except Exception as e:
-            print("Command Error:", e)
+            logger.error("command handling failed: %s", e)
             self._state_fail(str(e))
             self.speak("Error boss")
             return True
@@ -686,7 +705,7 @@ What do you want me to do?
             self.speak(reply)
             self._state_succeed(result="ok")
         except Exception as e:
-            print("Command Error:", e)
+            logger.error("command handling failed: %s", e)
             self._state_fail(str(e))
             self.speak("Error boss")
 
@@ -699,7 +718,7 @@ What do you want me to do?
                 word = self.listen_command(timeout=5, phrase_time=3)
                 if not word:
                     continue
-                if "afnan" in word.lower():
+                if self.config.wake_word in word.lower():
                     self.speak("Yes boss")
                     command = self.listen_command(timeout=7, phrase_time=8)
                     if command:
@@ -721,8 +740,9 @@ def create_agent(
     executor: Executor | None = None,
     verifier: Verifier | None = None,
     orchestrator: OrchestratorAgent | None = None,
-    max_iterations: int = OrchestratorAgent.DEFAULT_MAX_ITERATIONS,
-    max_recovery_attempts: int = 2,
+    max_iterations: int | None = None,
+    max_recovery_attempts: int | None = None,
+    config: AgentConfig | None = None,
 ) -> AfnanAgent:
     return AfnanAgent(
         adapter=adapter,
@@ -735,4 +755,5 @@ def create_agent(
         orchestrator=orchestrator,
         max_iterations=max_iterations,
         max_recovery_attempts=max_recovery_attempts,
+        config=config,
     )

@@ -1,10 +1,11 @@
+# Afnan AI — runtime dependencies (core only; everything here is
+# imported by the package or required by one of its features)
 SpeechRecognition==3.16.0
-PyAudio==0.2.14; sys_platform == 'darwin' or sys_platform == 'linux'
-PyAudio==0.2.14; sys_platform == 'win32'
+# PyAudio is what SpeechRecognition uses for microphone input
+PyAudio==0.2.14
 PyAutoGUI==0.9.54
 pywhatkit==5.4
 ollama==0.6.1
-Pillow==12.1.1
 pyttsx3==2.99
 # pyttsx3 needs an engine driver per OS:
 # Windows: pywin32 (installed automatically by pyttsx3 on Windows)

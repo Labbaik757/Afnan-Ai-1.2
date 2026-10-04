@@ -1,7 +1,9 @@
 """Afnan AI — cross-platform voice assistant package."""
 
+from afnan_ai.config import AgentConfig
 from afnan_ai.executor import ExecutionReport, Executor
 from afnan_ai.llm import LLMProvider, OllamaProvider
+from afnan_ai.log_config import configure_logging
 from afnan_ai.orchestrator import Agent, OrchestrationResult, OrchestrationStatus
 from afnan_ai.recovery import RecoveryAttempt, RecoveryError, RecoveryManager
 from afnan_ai.planner import Planner, TaskPlan
@@ -12,6 +14,7 @@ from afnan_ai.verifier import VerificationResult, VerificationStatus, Verifier
 __all__ = [
     "__version__",
     "Agent",
+    "AgentConfig",
     "AgentState",
     "ExecutionReport",
     "Executor",
@@ -28,6 +31,7 @@ __all__ = [
     "TaskPlan",
     "TaskStatus",
     "Tool",
+    "configure_logging",
     "ToolRegistry",
     "ToolResult",
     "VerificationResult",

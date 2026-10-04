@@ -64,6 +64,7 @@ from afnan_ai.executor import (
     Executor,
     StepExecutionResult,
 )
+from afnan_ai.log_config import get_logger
 from afnan_ai.planner import Planner, PlanningError, TaskPlan
 from afnan_ai.recovery import RecoveryError, RecoveryManager
 from afnan_ai.state import AgentState, TaskStatus
@@ -77,6 +78,9 @@ from afnan_ai.verifier import (
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+logger = get_logger(__name__)
 
 
 class OrchestrationStatus(str, Enum):
@@ -275,6 +279,10 @@ class Agent:
         )
         task_state.add_observation(
             f"Agent received goal: {goal}", source="agent"
+        )
+        logger.info(
+            "task %s started: goal=%r max_iterations=%d",
+            task_state.task_id, goal, limit,
         )
 
         # 1) Plan ------------------------------------------------------------
@@ -553,6 +561,10 @@ class Agent:
         task_state.add_observation(
             f"Agent finished: {result.summary()}", source="agent"
         )
+        if outcome == OrchestrationStatus.COMPLETED:
+            logger.info("task %s", result.summary())
+        else:
+            logger.warning("task %s", result.summary())
         return result
 
     # Alias in the vocabulary used by the agent layer
@@ -607,5 +619,9 @@ class Agent:
         result.state.add_observation(
             f"Agent could not plan the task: {error.error.message}",
             source="agent",
+        )
+        logger.warning(
+            "task %s planning failed: %s",
+            result.state.task_id, error.error.message,
         )
         return result

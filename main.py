@@ -14,11 +14,11 @@ Usage:
 
 from afnan_ai.agent import AfnanAgent, create_agent
 from afnan_ai.executor import Executor
-from afnan_ai.llm import LLMProvider, OllamaProvider, create_provider, get_default_provider
+from afnan_ai.llm import LLMProvider
 from afnan_ai.planner import Planner, TaskPlan
 from afnan_ai.platform import get_adapter
 from afnan_ai.state import AgentState
-from afnan_ai.tools import Tool, ToolRegistry, create_default_registry
+from afnan_ai.tools import Tool, ToolRegistry
 from afnan_ai.verifier import Verifier
 
 # Default agent + adapter for this machine (auto-selected at runtime)

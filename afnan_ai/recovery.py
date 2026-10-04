@@ -45,8 +45,12 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+from afnan_ai.log_config import get_logger
 from afnan_ai.planner import Planner, PlanningError, TaskPlan
 from afnan_ai.state import AgentState
+
+
+logger = get_logger(__name__)
 
 
 def _now_iso() -> str:
@@ -343,4 +347,9 @@ class RecoveryManager:
             + (f" -> plan {record.new_plan_id}" if record.new_plan_id else "")
             + (f" — {record.reason}" if record.reason else ""),
             source="recovery",
+        )
+        logger.info(
+            "recovery attempt %d (%s, step %s): %s",
+            record.attempt, record.trigger,
+            record.failed_step_id, record.outcome,
         )
