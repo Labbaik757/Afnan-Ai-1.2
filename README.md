@@ -1,6 +1,6 @@
-# 🤖 Maya AI 1.2 (macOS Edition)
+# 🤖 Afnan AI 1.2 (macOS Edition)
 
-Maya AI is a personal voice assistant built with Python and powered by Ollama. It can understand voice commands, open applications, search the web, play music, capture screenshots, and assist you with everyday tasks using natural voice interaction.
+Afnan AI is a personal voice assistant built with Python and powered by Ollama. It can understand voice commands, open applications, search the web, play music, capture screenshots, and assist you with everyday tasks using natural voice interaction.
 
 > **Version:** 1.2  
 > **Platform:** macOS  
@@ -24,7 +24,7 @@ Maya AI is a personal voice assistant built with Python and powered by Ollama. I
 - 📺 YouTube Search
 - 📸 Screenshot Capture
 - 🎬 Startup GIF Animation
-- 🎯 Wake Word Detection ("Maya")
+- 🎯 Wake Word Detection ("Afnan")
 - ⚡ Fast Voice Command Processing
 
 ---
@@ -33,7 +33,7 @@ Maya AI is a personal voice assistant built with Python and powered by Ollama. I
 
 | Voice Command | Action |
 |---------------|--------|
-| Maya | Activate the assistant |
+| Afnan | Activate the assistant |
 | Open Visual Studio Code | Opens VS Code |
 | Open VS Code | Opens VS Code |
 | Open Safari | Opens Safari |
@@ -47,10 +47,10 @@ Maya AI is a personal voice assistant built with Python and powered by Ollama. I
 | Search Google for Python | Searches Google |
 | Search YouTube for AI | Searches YouTube |
 | Screenshot | Captures a screenshot |
-| Tell me about yourself | Maya introduces itself |
-| Introduce yourself | Maya introduces itself |
-| Who are you | Maya introduces itself |
-| Stop Maya | Closes Maya AI |
+| Tell me about yourself | Afnan introduces itself |
+| Introduce yourself | Afnan introduces itself |
+| Who are you | Afnan introduces itself |
+| Stop Afnan | Closes Afnan AI |
 
 ---
 
@@ -83,13 +83,13 @@ Maya AI is a personal voice assistant built with Python and powered by Ollama. I
 ### Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/Maya-AI-1.2.git
+git clone https://github.com/Labbaik757/Afnan-Ai-1.2.git
 ```
 
 ### Go to the project folder
 
 ```bash
-cd Maya-AI-1.2
+cd Afnan-Ai-1.2
 ```
 
 ### Install dependencies
@@ -98,7 +98,7 @@ cd Maya-AI-1.2
 pip install -r requirements.txt
 ```
 
-### Run Maya AI
+### Run Afnan AI
 
 ```bash
 python main.py
@@ -121,13 +121,13 @@ ollama
 # 📁 Project Structure
 
 ```
-Maya-AI-1.2
+Afnan-Ai-1.2
 │
 ├── main.py
 ├── requirements.txt
 ├── README.md
-├── maya_animation.gif
-├── maya_animation.html
+├── afnan_animation.gif
+├── afnan_animation.html
 ├── screenshots/
 └── assets/
 ```
@@ -136,26 +136,26 @@ Maya-AI-1.2
 
 # ⚙️ How It Works
 
-1. Launch Maya AI.
+1. Launch Afnan AI.
 2. The startup animation will appear.
-3. Maya activates the microphone.
-4. Say **"Maya"** to wake the assistant.
-5. Maya replies **"Yes Boss"**.
+3. Afnan activates the microphone.
+4. Say **"Afnan"** to wake the assistant.
+5. Afnan replies **"Yes Boss"**.
 6. Speak your command.
-7. Maya processes and executes your request.
+7. Afnan processes and executes your request.
 
 ---
 
 # 💬 Example
 
 ```
-You: Maya
+You: Afnan
 
-Maya: Yes Boss
+Afnan: Yes Boss
 
 You: Open Chrome
 
-Maya: Opening Chrome
+Afnan: Opening Chrome
 ```
 
 ---
@@ -169,9 +169,9 @@ Maya: Opening Chrome
 
 ---
 
-# 🚀 Maya AI 1.7 — Coming Soon
+# 🚀 Afnan AI 1.7 — Coming Soon
 
-Maya AI 1.7 is currently under active development and will introduce a major upgrade over version 1.2.
+Afnan AI 1.7 is currently under active development and will introduce a major upgrade over version 1.2.
 
 ### Planned Features
 
@@ -188,15 +188,15 @@ Maya AI 1.7 is currently under active development and will introduce a major upg
 
 Stay tuned for future updates.
 
-Visit the official Maya AI website regularly to check the latest announcements, new releases, feature updates, and upcoming versions.
+Visit the official Afnan AI website regularly to check the latest announcements, new releases, feature updates, and upcoming versions.
 
-Thank you for supporting Maya AI! ❤️
+Thank you for supporting Afnan AI! ❤️
 
 ---
 
 # 👨‍💻 Author
 
-Developed with ❤️ by **Taha**
+Developed with ❤️ by **Afnan**
 
 If you like this project, please consider giving it a ⭐ on GitHub.
 

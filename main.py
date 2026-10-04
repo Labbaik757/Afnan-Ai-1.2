@@ -10,7 +10,7 @@ from datetime import datetime
 recognizer = sr.Recognizer()
 
 # GIF Animation Configuration
-GIF_PATH = "maya_animation.gif"  # Change this to your GIF filename
+GIF_PATH = "afnan_animation.gif"  # Change this to your GIF filename
 
 def show_startup_gif():
     """Show GIF animation in browser"""
@@ -25,7 +25,7 @@ def show_startup_gif():
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Maya AI</title>
+    <title>Afnan AI</title>
     <style>
         body {{
             margin: 0;
@@ -38,7 +38,7 @@ def show_startup_gif():
             overflow: hidden;
         }}
        
-        .maya-gif {{
+        .afnan-gif {{
             max-width: 90vw;
             max-height: 90vh;
     
@@ -47,31 +47,31 @@ def show_startup_gif():
     </style>
 </head>
 <body>
-    <div class="maya-container">
-        <img src="file://{gif_absolute_path}" alt="Maya AI Animation" class="maya-gif">
+    <div class="afnan-container">
+        <img src="file://{gif_absolute_path}" alt="Afnan AI Animation" class="afnan-gif">
     </div>
 </body>
 </html>
             """
             
             # Save HTML file
-            html_file = "maya_animation.html"
+            html_file = "afnan_animation.html"
             with open(html_file, "w", encoding="utf-8") as f:
                 f.write(html_content)
             
             # Open HTML in browser
             html_path = os.path.abspath(html_file)
             webbrowser.open(f"file://{html_path}")
-            print("✅ Maya AI animation opened in browser")
+            print("✅ Afnan AI animation opened in browser")
             
         else:
             print(f"❌ GIF file not found: {gif_absolute_path}")
             print("💡 Using fallback animation...")
             
             # Open fallback animation
-            fallback_path = os.path.abspath("maya_fallback_animation.html")
+            fallback_path = os.path.abspath("afnan_fallback_animation.html")
             webbrowser.open(f"file://{fallback_path}")
-            print("✅ Maya AI fallback animation opened in browser")
+            print("✅ Afnan AI fallback animation opened in browser")
             
     except Exception as e:
         print(f"❌ GIF Error: {e}")
@@ -79,7 +79,7 @@ def show_startup_gif():
 
 def speak(text):
     try:
-        print("maya:", text)
+        print("afnan:", text)
         safe_text = text.replace('"', '\\"')
         os.system(f'say "{safe_text}"')
     except Exception as e:
@@ -88,9 +88,9 @@ def speak(text):
 # -------------------- INTRODUCTION -------------------- #
 def introduce_yourself():
     speak("""
-Hello! I am Maya.
+Hello! I am Afnan.
 
-Created by Taha.
+Created by Afnan.
 
 I am not just a simple assistant — I am smart, fast, and always ready to help.
 
@@ -233,7 +233,7 @@ def process_command(command):
             take_screenshot()
             speak("Screenshot taken")
 
-        elif "stop maya" in command:
+        elif "stop afnan" in command:
             speak("Goodbye boss")
             raise SystemExit
       
@@ -247,11 +247,11 @@ def process_command(command):
         speak("Error boss")
 
 # -------------------- MAIN LOOP -------------------- #
-def start_maya():
+def start_afnan():
     # Show GIF in browser first
     show_startup_gif()
     
-    speak("Maya is activated")
+    speak("Afnan is activated")
 
     while True:
         try:
@@ -260,7 +260,7 @@ def start_maya():
             if not word:
                 continue
 
-            if "maya" in word.lower():
+            if "afnan" in word.lower():
                 speak("Yes boss")
 
                 command = listen_command(timeout=7, phrase_time=8)
@@ -275,6 +275,6 @@ def start_maya():
 
 if __name__ == "__main__":
     try:
-        start_maya()
+        start_afnan()
     except KeyboardInterrupt:
-        print("\nMaya AI stopped by user")
+        print("\nAfnan AI stopped by user")
