@@ -1,4 +1,4 @@
-# 🤖 Afnan AI 1.2 (Windows + macOS Edition)
+# 🤖 Afnan AI 1.2 (Windows + macOS + Linux Edition)
 
 Afnan AI is a personal voice assistant built with Python and powered by Ollama. It can understand voice commands, open applications, search the web, play music, capture screenshots, and assist you with everyday tasks using natural voice interaction.
 
@@ -150,14 +150,60 @@ pyttsx3
 ```
 Afnan-Ai-1.2
 │
-├── main.py
+├── main.py                  (thin entry point, backwards compatible)
+├── afnan_ai/
+│   ├── agent.py             (core agent — no OS-specific code)
+│   ├── speech.py            (pyttsx3 first, adapter speech as fallback)
+│   └── platform/
+│       ├── base.py          (PlatformAdapter interface)
+│       ├── factory.py       (auto-selects the adapter at runtime)
+│       ├── windows.py       (PowerShell speech, startfile, cmd start)
+│       ├── macos.py         (say, open / open -a, mdfind)
+│       └── linux.py         (espeak/spd-say, xdg-open)
 ├── gif_viewer.py
+├── tests/                   (compatibility tests, run on any host OS)
+├── tools/check_compatibility.py
 ├── requirements.txt
 ├── README.md
 ├── afnan_animation.gif
 ├── afnan_animation.html
 └── screenshots/   (created when you take a screenshot)
 ```
+
+# 🏗️ Architecture — OS Abstraction Layer
+
+Platform-specific code is isolated behind one interface, so the
+core agent never touches an OS command directly:
+
+- `afnan_ai/platform/base.py` — `PlatformAdapter`: `speak_system()`,
+  `open_path()`, `launch_app()`, `find_folder()`
+- `afnan_ai/platform/windows.py` / `macos.py` / `linux.py` — the
+  only files containing Windows, macOS or Linux specific calls
+- `afnan_ai/platform/factory.py` — `get_adapter()` reads
+  `platform.system()` at runtime and returns the Windows, macOS
+  or Linux adapter automatically — no configuration needed
+- `afnan_ai/agent.py` — wake word, command routing, search, music,
+  screenshots and Ollama fallback, all written against the adapter
+
+A test in `tests/test_agent_commands.py` fails if an OS-specific
+call ever leaks back into the core agent.
+
+# ✅ Compatibility Tests
+
+The tests simulate all three operating systems (mocking
+`platform.system`, `subprocess`, speech and the microphone), so
+they run safely on any host:
+
+```bash
+python -m unittest discover -s tests -v
+# or
+python tools/check_compatibility.py
+```
+
+They cover adapter selection for Windows/macOS/Linux, each
+adapter's speech/open/launch behaviour, known-folder lookup, and
+that every existing voice command still routes to the same feature
+as before the refactor.
 
 ---
 
@@ -172,10 +218,11 @@ Afnan-Ai-1.2
 7. Afnan processes and executes your request, or asks the local
    Ollama Llama 3 model when no command matches.
 
-On every platform it opens apps, folders and files with the native
-handler: `open` on macOS, `os.startfile` / `start` on Windows, and
-`xdg-open` on Linux. Folder search uses Spotlight (`mdfind`) on macOS
-and a home-folder search on Windows/Linux.
+At startup the platform factory detects your OS and picks the
+matching adapter, so the same `main.py` opens apps, folders and
+files natively on Windows, macOS and Linux without any manual
+configuration. Folder search uses Spotlight on macOS and a
+home-folder search on Windows/Linux.
 
 ---
 
