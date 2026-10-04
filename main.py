@@ -16,6 +16,7 @@ from afnan_ai.agent import AfnanAgent, create_agent
 from afnan_ai.llm import LLMProvider, OllamaProvider, create_provider, get_default_provider
 from afnan_ai.platform import get_adapter
 from afnan_ai.state import AgentState
+from afnan_ai.tools import Tool, ToolRegistry, create_default_registry
 
 # Default agent + adapter for this machine (auto-selected at runtime)
 adapter = get_adapter()
@@ -65,6 +66,21 @@ def ask_ai(prompt):
 def get_llm_provider():
     """Return the LLMProvider the agent talks to (Ollama by default)."""
     return _agent.llm
+
+
+def get_tool_registry():
+    """Return the central ToolRegistry (dynamic register/get/execute)."""
+    return _agent.tools
+
+
+def list_tools():
+    return _agent.list_tools()
+
+
+def execute_tool(name, arguments=None, **kwargs):
+    """Execute a registered tool; failures come back as a
+    structured ToolResult (success=False, error=ToolError)."""
+    return _agent.execute_tool(name, arguments, **kwargs)
 
 
 def listen_command(timeout=5, phrase_time=6):

@@ -160,6 +160,11 @@ Afnan-Ai-1.2
 │   │   ├── base.py          (LLMProvider interface + typed errors)
 │   │   ├── ollama.py        (OllamaProvider — local Ollama, llama3)
 │   │   └── factory.py       (provider registry / default provider)
+│   ├── tools/
+│   │   ├── base.py          (Tool interface + structured errors)
+│   │   ├── registry.py      (ToolRegistry — register/get/execute)
+│   │   └── builtin.py       (open_url, open_application,
+│   │                         search_google, take_screenshot, ...)
 │   ├── speech.py            (pyttsx3 first, adapter speech as fallback)
 │   └── platform/
 │       ├── base.py          (PlatformAdapter interface)
@@ -272,6 +277,51 @@ response, an unavailable client and swapping in a completely
 different provider without touching the agent live in
 `tests/test_llm_provider.py`.  A test there also fails if a direct
 `ollama` call ever leaks back into `agent.py` or `main.py`.
+
+# 🧰 Tools — Generic Tool Interface & ToolRegistry
+
+Every capability is a `Tool` in `afnan_ai/tools/base.py` with a
+**name**, a **description**, a JSON-Schema-style **input schema**
+and an **execute** method.  The central `ToolRegistry`
+(`afnan_ai/tools/registry.py`) registers, finds and runs them:
+
+```python
+from afnan_ai.tools import create_default_registry
+
+registry = create_default_registry(adapter)   # adapter from afnan_ai.platform
+registry.register(my_custom_tool)             # dynamic registration
+tool = registry.get("search_google")          # raises a structured error if unknown
+
+result = registry.execute("search_google", {"query": "python"})
+result.success   # True
+result.output    # {"query": "python", "url": "https://...", "opened": True}
+
+bad = registry.execute("search_google", {})   # missing argument — no crash
+bad.error.code   # ToolErrorCode.MISSING_ARGUMENTS
+```
+
+Built-in tools preserve the exact behaviour Afnan already had:
+`open_url`, `open_application` (Chrome/VS Code/Edge/WhatsApp/
+Safari via the platform adapter), `search_google`, `search_youtube`
+and `take_screenshot`.  The voice agent routes its commands through
+the registry (`agent.execute_tool(...)`, `agent.list_tools()`),
+records every execution in `AgentState`, and falls back exactly as
+before (e.g. Chrome not launching opens google.com instead).
+`registry.definitions()` returns serializable tool descriptions
+ready to hand to an LLM for function calling.
+
+Failures are structured, never bare crashes: an unknown tool gives
+`tool_not_found`, missing arguments give `missing_arguments`, a
+wrong-typed argument gives `invalid_arguments`, and a tool that
+fails while running gives `execution_failed` — all as
+`ToolResult(success=False, error=ToolError(code, message, tool,
+details))`, with matching exception forms (`ToolNotFoundError`,
+`ToolValidationError`, `ToolExecutionError`) for callers who prefer
+`try/except`.
+
+Tests for registration, dynamic lookup, execution, invalid tools,
+missing/invalid arguments and execution failures live in
+`tests/test_tool_registry.py`.
 
 # ✅ Compatibility Tests
 

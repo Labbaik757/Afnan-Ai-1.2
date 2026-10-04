@@ -6,7 +6,9 @@ operating-system specific action is delegated to a
 :class:`~afnan_ai.platform.base.PlatformAdapter`, selected at runtime
 by :func:`afnan_ai.platform.get_adapter`, and every language-model
 call goes through the :class:`~afnan_ai.llm.LLMProvider` interface
-(default: :class:`~afnan_ai.llm.OllamaProvider`).  There is
+(default: :class:`~afnan_ai.llm.OllamaProvider`), and every
+capability (open URL/app, search, screenshot) runs through the
+central :class:`~afnan_ai.tools.ToolRegistry`.  There is
 intentionally no OS-specific launching, searching or speech code,
 and no concrete model-client call, in this file.
 """
@@ -14,9 +16,7 @@ and no concrete model-client call, in this file.
 from __future__ import annotations
 
 import os
-import urllib.parse
 import webbrowser
-from datetime import datetime
 from pathlib import Path
 
 from afnan_ai import speech as _speech
@@ -29,6 +29,7 @@ from afnan_ai.llm.base import (
 from afnan_ai.platform import get_adapter
 from afnan_ai.platform.base import PlatformAdapter
 from afnan_ai.state import AgentState
+from afnan_ai.tools import ToolRegistry, ToolResult, create_default_registry
 
 try:
     import speech_recognition as sr
@@ -59,9 +60,17 @@ class AfnanAgent:
         *,
         track_state: bool = True,
         llm_provider: LLMProvider | None = None,
+        tool_registry: ToolRegistry | None = None,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
+        # Capabilities run through the central ToolRegistry
+        # (open_url, open_application, search_google, ...).  Pass a
+        # registry to add/replace tools without changing agent code.
+        self.tools: ToolRegistry = tool_registry or create_default_registry(
+            self.adapter,
+            screenshot_capture=self._capture_screenshot,
+        )
         # The agent talks to a model only through the LLMProvider
         # interface.  By default that is the local Ollama provider
         # (llama3), exactly as before; pass any other provider
@@ -104,6 +113,48 @@ class AfnanAgent:
             if self.state.current_step:
                 self.state.fail_step(self.state.current_step, error)
             self.state.add_tool_result("process_command", success=False, error=error)
+
+    # -- tool helpers ------------------------------------------------------
+    def execute_tool(self, name: str, arguments=None, **kwargs) -> ToolResult:
+        """Execute a registered tool and record it in AgentState.
+
+        Structured failures come back as ``ToolResult(success=False,
+        error=ToolError(...))``; this never raises for an unknown
+        tool, missing arguments or a tool failure.
+        """
+        result = self.tools.execute(name, arguments, **kwargs)
+        if self.track_state:
+            if self.state is None or self.state.is_terminal:
+                self.state = AgentState.create(f"Execute tool {name}")
+                self.state.start_task()
+            self.state.add_tool_result(
+                name,
+                success=result.success,
+                output=result.output if result.success else None,
+                error=result.error.message if result.error else None,
+            )
+        return result
+
+    def get_tool(self, name: str):
+        return self.tools.get(name)
+
+    def list_tools(self):
+        return self.tools.definitions()
+
+    def _open_url(self, url: str) -> bool:
+        return self.execute_tool("open_url", {"url": url}).success
+
+    def _open_application(self, application: str) -> bool:
+        return self.execute_tool(
+            "open_application", {"application": application}
+        ).success
+
+    def _capture_screenshot(self):
+        # Read the module global at call time so tests/hosts can
+        # substitute the capture backend
+        if pyautogui is None:
+            return None
+        return pyautogui.screenshot()
 
     # -- speech --------------------------------------------------------
     def speak(self, text: str) -> None:
@@ -262,24 +313,21 @@ What do you want me to do?
             if pywhatkit is not None:
                 pywhatkit.playonyt(song)
             else:
-                query = urllib.parse.quote(song)
-                webbrowser.open(f"https://www.youtube.com/results?search_query={query}")
+                self.execute_tool("search_youtube", {"query": song})
         except Exception:
             self.speak("Sorry boss")
 
     # -- screenshot --------------------------------------------------------------
     def take_screenshot(self) -> str | None:
-        if pyautogui is None:
-            self.speak("Sorry boss, screenshot is not available")
+        result = self.execute_tool("take_screenshot")
+        if not result.success:
+            # Preserve the original spoken message when capture is
+            # unavailable (pyautogui missing / no screen)
+            error_text = result.error.message if result.error else ""
+            if "not available" in error_text:
+                self.speak("Sorry boss, screenshot is not available")
             return None
-        screenshots_dir = Path("screenshots")
-        screenshots_dir.mkdir(exist_ok=True)
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        file_path = screenshots_dir / f"screenshot_{timestamp}.png"
-        screenshot = pyautogui.screenshot()
-        screenshot.save(str(file_path))
-        self.adapter.open_path(str(file_path))
-        return str(file_path)
+        return result.output
 
     # -- command routing (existing behaviour preserved) ---------------------------
     def process_command(self, command: str) -> None:
@@ -289,7 +337,7 @@ What do you want me to do?
         try:
             if "open visual studio code" in command or "open vs code" in command:
                 self.speak("Opening Visual Studio Code")
-                if not self.adapter.launch_app("vscode"):
+                if not self._open_application("vscode"):
                     self.speak("Visual Studio Code not found boss")
 
             elif "open safari" in command:
@@ -298,29 +346,29 @@ What do you want me to do?
                         "Safari is not available on this system, "
                         "opening your default browser"
                     )
-                    webbrowser.open("https://www.apple.com/safari/")
+                    self._open_url("https://www.apple.com/safari/")
                 else:
                     self.speak("Opening Safari")
-                    self.adapter.launch_app("safari")
+                    self._open_application("safari")
 
             elif "open chrome" in command or "open google chrome" in command:
                 self.speak("Opening Chrome")
-                if not self.adapter.launch_app("chrome"):
-                    webbrowser.open("https://www.google.com")
+                if not self._open_application("chrome"):
+                    self._open_url("https://www.google.com")
 
             elif "open edge" in command or "open microsoft edge" in command:
                 self.speak("Opening Microsoft Edge")
-                if not self.adapter.launch_app("edge"):
+                if not self._open_application("edge"):
                     self.speak("Microsoft Edge not found boss")
 
             elif "open youtube" in command:
                 self.speak("Opening YouTube")
-                webbrowser.open("https://youtube.com")
+                self._open_url("https://youtube.com")
 
             elif "open whatsapp" in command:
                 self.speak("Opening WhatsApp")
-                if not self.adapter.launch_app("whatsapp"):
-                    webbrowser.open("https://web.whatsapp.com")
+                if not self._open_application("whatsapp"):
+                    self._open_url("https://web.whatsapp.com")
 
             elif (
                 "tell me about yourself" in command
@@ -335,16 +383,11 @@ What do you want me to do?
 
             elif "search youtube for" in command:
                 query = command.replace("search youtube for", "").strip()
-                webbrowser.open(
-                    "https://www.youtube.com/results?search_query="
-                    + urllib.parse.quote(query)
-                )
+                self.execute_tool("search_youtube", {"query": query})
 
             elif "search google for" in command:
                 query = command.replace("search google for", "").strip()
-                webbrowser.open(
-                    "https://www.google.com/search?q=" + urllib.parse.quote(query)
-                )
+                self.execute_tool("search_google", {"query": query})
 
             elif command.startswith("play "):
                 self.play_song(command)
@@ -399,5 +442,11 @@ def create_agent(
     adapter: PlatformAdapter | None = None,
     state: AgentState | None = None,
     llm_provider: LLMProvider | None = None,
+    tool_registry: ToolRegistry | None = None,
 ) -> AfnanAgent:
-    return AfnanAgent(adapter=adapter, state=state, llm_provider=llm_provider)
+    return AfnanAgent(
+        adapter=adapter,
+        state=state,
+        llm_provider=llm_provider,
+        tool_registry=tool_registry,
+    )

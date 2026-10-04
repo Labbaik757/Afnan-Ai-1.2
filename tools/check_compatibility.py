@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from afnan_ai.platform import get_adapter  # noqa: E402
+from afnan_ai.tools import create_default_registry  # noqa: E402
 
 
 def main() -> int:
@@ -25,6 +26,15 @@ def main() -> int:
         if status == "FAIL":
             failures.append(system)
         print(f"{status}: platform.system()={system!r} -> {type(adapter).__name__} ({adapter.name})")
+
+    registry = create_default_registry(get_adapter("Linux"))
+    required_tools = ("open_url", "open_application", "search_google", "take_screenshot")
+    missing_tools = [name for name in required_tools if not registry.has(name)]
+    if missing_tools:
+        failures.append(f"tools:{missing_tools}")
+        print(f"FAIL: tool registry missing {missing_tools}")
+    else:
+        print(f"OK: tool registry has {registry.names()}")
 
     for path in sorted(ROOT.rglob("*.py")):
         if ".git" in path.parts or "__pycache__" in path.parts:
