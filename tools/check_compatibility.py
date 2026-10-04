@@ -106,6 +106,40 @@ def main() -> int:
     else:
         print("OK: verifier never executes tools")
 
+    # The central Agent orchestrator must drive tools only through
+    # the Executor — it must never reach the ToolRegistry, a tool,
+    # or the platform adapter directly.
+    orchestrator_tree = ast.parse(
+        (ROOT / "afnan_ai" / "orchestrator.py").read_text(encoding="utf-8")
+    )
+    orchestrator_attr_calls = {
+        node.func.attr
+        for node in ast.walk(orchestrator_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    orchestrator_name_calls = {
+        node.func.id
+        for node in ast.walk(orchestrator_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    forbidden_orchestrator = {
+        "execute", "execute_or_raise", "launch_app", "open_path",
+        "speak_system", "find_folder", "eval", "exec", "compile",
+        "__import__",
+    }
+    found_forbidden = sorted(
+        forbidden_orchestrator
+        & (orchestrator_attr_calls | orchestrator_name_calls)
+    )
+    if found_forbidden:
+        failures.append(f"orchestrator bypasses Executor ({found_forbidden})")
+        print(f"FAIL: orchestrator.py calls {found_forbidden} — Agent must execute only via Executor")
+    elif "execute_step" not in orchestrator_attr_calls:
+        failures.append("orchestrator never calls Executor.execute_step")
+        print("FAIL: orchestrator.py does not dispatch through Executor.execute_step")
+    else:
+        print("OK: orchestrator dispatches only via Executor, no direct tool/platform calls")
+
     for path in sorted(ROOT.rglob("*.py")):
         if ".git" in path.parts or "__pycache__" in path.parts:
             continue

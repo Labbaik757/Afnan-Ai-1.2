@@ -27,6 +27,8 @@ from afnan_ai.llm.base import (
     LLMInvalidResponseError,
     LLMUnavailableError,
 )
+from afnan_ai.orchestrator import Agent as OrchestratorAgent
+from afnan_ai.orchestrator import OrchestrationResult
 from afnan_ai.platform import get_adapter
 from afnan_ai.platform.base import PlatformAdapter
 from afnan_ai.planner import Planner, TaskPlan
@@ -67,6 +69,8 @@ class AfnanAgent:
         planner: Planner | None = None,
         executor: Executor | None = None,
         verifier: Verifier | None = None,
+        orchestrator: OrchestratorAgent | None = None,
+        max_iterations: int = OrchestratorAgent.DEFAULT_MAX_ITERATIONS,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -93,6 +97,18 @@ class AfnanAgent:
         # Verifier judges executed steps against their expected
         # results — it analyzes results/state, never re-executes
         self.verifier: Verifier = verifier or Verifier()
+        # Central orchestration layer: the Agent that connects
+        # AgentState + Planner + Executor + Verifier and manages a
+        # complete task lifecycle (goal → plan → step-by-step
+        # execute/verify → completion), capped by max_iterations.
+        # Voice commands keep their existing direct behaviour.
+        self.max_iterations = max_iterations
+        self.orchestrator: OrchestratorAgent = orchestrator or OrchestratorAgent(
+            planner=self.planner,
+            executor=self.executor,
+            verifier=self.verifier,
+            max_iterations=max_iterations,
+        )
         # Centralized, serializable task state.  Components may pass
         # their own AgentState, read ``agent.state``, or ignore it —
         # existing behaviour is unchanged when they do.
@@ -250,6 +266,31 @@ class AfnanAgent:
         report = self.execute_plan(plan, state=state)
         verification = self.verify_plan(plan, report, state=state)
         return report, verification
+
+    # -- central orchestration (complete task lifecycle) ----------------------
+    def run_task(
+        self,
+        goal: str,
+        state: AgentState | None = None,
+        max_iterations: int | None = None,
+    ) -> OrchestrationResult:
+        """Run a complete orchestrated task for *goal*.
+
+        Lifecycle: state is created/updated, the Planner generates
+        a plan, then steps are executed and verified one at a time
+        until the task completes, fails, or hits the mandatory
+        maximum-iteration limit.  The resulting AgentState becomes
+        this agent's current state.
+        """
+        effective_state = state if state is not None else self.state
+        result = self.orchestrator.run(
+            goal, state=effective_state, max_iterations=max_iterations
+        )
+        self.state = result.state
+        return result
+
+    # Alias in goal vocabulary
+    run_goal = run_task
 
     def _open_url(self, url: str) -> bool:
         return self.execute_tool("open_url", {"url": url}).success
@@ -556,6 +597,8 @@ def create_agent(
     planner: Planner | None = None,
     executor: Executor | None = None,
     verifier: Verifier | None = None,
+    orchestrator: OrchestratorAgent | None = None,
+    max_iterations: int = OrchestratorAgent.DEFAULT_MAX_ITERATIONS,
 ) -> AfnanAgent:
     return AfnanAgent(
         adapter=adapter,
@@ -565,4 +608,6 @@ def create_agent(
         planner=planner,
         executor=executor,
         verifier=verifier,
+        orchestrator=orchestrator,
+        max_iterations=max_iterations,
     )

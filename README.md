@@ -162,6 +162,9 @@ Afnan-Ai-1.2
 │   │                         via ToolRegistry, records AgentState)
 │   ├── verifier.py          (Verifier — checks actual results vs
 │   │                         expected_result, never re-executes)
+│   ├── orchestrator.py      (Agent — central orchestrator: state +
+│   │                         planner + executor + verifier, full
+│   │                         task lifecycle, max-iteration limit)
 │   ├── llm/
 │   │   ├── base.py          (LLMProvider interface + typed errors)
 │   │   ├── ollama.py        (OllamaProvider — local Ollama, llama3)
@@ -482,6 +485,63 @@ AgentState recording and the never-re-executes guarantee live in
 `tests/test_verifier.py`; `tools/check_compatibility.py`
 additionally AST-checks that `verifier.py` contains no execution
 call.
+
+# 🧭 Agent — Central Orchestrator (Complete Task Lifecycle)
+
+`afnan_ai/orchestrator.py` contains the `Agent` — the central
+orchestration layer that connects `AgentState`, the `Planner`, the
+`Executor` and the `Verifier` and manages a complete task from
+goal to completion:
+
+```
+user goal received
+  → AgentState created / updated
+  → Planner generates a TaskPlan
+  → Executor executes the next step
+  → Verifier verifies that step's result
+  → AgentState updated
+  → next step … or task completion / failure
+```
+
+```python
+from afnan_ai import Agent
+
+result = agent.run_task("Open Chrome and search for Python scripting")
+result.status       # OrchestrationStatus.COMPLETED / FAILED /
+                    # PLANNING_FAILED / MAX_ITERATIONS_EXCEEDED
+result.success      # True only when the task genuinely completed
+result.iterations   # step executions actually performed
+result.plan         # the TaskPlan that was executed
+result.execution    # aggregated ExecutionReport (unrun steps = skipped)
+result.verification # aggregated VerificationReport
+result.state        # final AgentState (inspect, save, serialize…)
+```
+
+Rules the orchestrator enforces:
+
+- **Maximum iteration limit is mandatory.** Every step execution
+  counts as one iteration; reaching `max_iterations` (default 10,
+  validated as a positive integer, overridable per run but never
+  removable) stops the task with a `max_iterations_exceeded`
+  outcome — the agent can never loop forever.
+- **Failures stop the task honestly.** A planning failure
+  (`planning_failed`), an execution failure, or a failed
+  verification ends the run; remaining steps are reported as
+  *skipped*, never as done. An *uncertain* verification is
+  recorded but does not block an otherwise successful execution
+  unless `strict_verification=True`.
+- **No responsibility is duplicated.** The Agent plans only via
+  the Planner, executes only via the Executor (one step at a time,
+  through `Executor.execute_step`) and judges only via the
+  Verifier; `tools/check_compatibility.py` AST-checks that it
+  never touches the registry, a tool or a platform adapter itself.
+
+The voice assistant uses it as its orchestration layer
+(`agent.orchestrator`, `agent.run_task(goal)`, also exposed as
+`main.run_task(goal)`), while the existing voice-command behaviour
+is unchanged. Tests for successful completion, planning failure,
+execution failure, unknown tools, the maximum-iteration stop and
+voice-assistant integration live in `tests/test_orchestrator.py`.
 
 # ✅ Compatibility Tests
 

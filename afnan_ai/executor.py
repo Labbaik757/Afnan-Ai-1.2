@@ -264,7 +264,7 @@ class Executor:
             if halted:
                 report.step_results.append(self._skipped_result(step))
                 continue
-            result = self._execute_step(step, effective_state, plan)
+            result = self._execute_step(step, effective_state, plan.plan_id)
             report.step_results.append(result)
             if not result.success and self.stop_on_failure:
                 halted = True
@@ -297,6 +297,44 @@ class Executor:
 
     # Alias matching the naming used elsewhere (run/execute a plan)
     run_plan = execute_plan
+
+    def execute_step(
+        self,
+        step: PlanStep,
+        state: AgentState | None = None,
+        *,
+        plan_id: str | None = None,
+    ) -> StepExecutionResult:
+        """Execute exactly one plan step through the ToolRegistry.
+
+        Unlike :meth:`execute_plan`, this does **not** complete or
+        fail the whole task in AgentState — it records the step's
+        tool result and completed/failed step only.  That is what
+        lets an orchestrator own the task lifecycle (it decides
+        after each step whether to continue, stop or finish).
+
+        Raises ExecutionError only for a malformed step; tool
+        existence/argument/execution failures come back as
+        ``StepExecutionResult(success=False, error=...)``.
+        """
+        if not isinstance(step, PlanStep) or not step.step_id or not step.tool_name:
+            raise ExecutionError(
+                "execute_step needs a PlanStep with a step_id and a tool_name",
+                code=ExecutorErrorCode.INVALID_STEP,
+                details={"received": type(step).__name__},
+            )
+        if state is not None:
+            effective_state = state
+        elif self.state is not None and not self.state.is_terminal:
+            effective_state = self.state
+        else:
+            effective_state = AgentState.create(
+                step.description or f"Execute step {step.step_id}"
+            )
+        self.state = effective_state
+        if effective_state.is_terminal or effective_state.status == TaskStatus.PENDING:
+            effective_state.start_task()
+        return self._execute_step(step, effective_state, plan_id or "single-step")
 
     # -- plan / state preparation --------------------------------------
     @staticmethod
@@ -363,7 +401,7 @@ class Executor:
         self,
         step: PlanStep,
         state: AgentState,
-        plan: TaskPlan,
+        plan_id: str,
     ) -> StepExecutionResult:
         result = StepExecutionResult(
             step_id=step.step_id,
@@ -380,7 +418,7 @@ class Executor:
                 "tool_name": step.tool_name,
                 "arguments": result.arguments,
                 "expected_result": step.expected_result,
-                "plan_id": plan.plan_id,
+                "plan_id": plan_id,
             },
         )
 
@@ -397,7 +435,7 @@ class Executor:
                 step.tool_name,
                 success=True,
                 output=tool_result.output,
-                metadata={"step_id": step.step_id, "plan_id": plan.plan_id},
+                metadata={"step_id": step.step_id, "plan_id": plan_id},
             )
             state.complete_step(step.step_id, result=tool_result.output)
             return result

@@ -1,0 +1,503 @@
+"""Agent — the central orchestrator for Afnan's task lifecycle.
+
+Until now the pieces existed side by side: ``AgentState`` tracked a
+task, the ``Planner`` turned a goal into a ``TaskPlan``, the
+``Executor`` ran plan steps through the ``ToolRegistry``, and the
+``Verifier`` judged each step's actual result against its
+``expected_result``.  The :class:`Agent` in this module is the one
+component that connects them and manages a complete task from
+start to finish:
+
+    user goal received
+      → AgentState created / updated
+      → Planner generates a TaskPlan
+      → Executor executes the *next* step
+      → Verifier verifies that step's result
+      → AgentState updated
+      → next step … or task completion / failure
+
+Safety & lifecycle rules
+------------------------
+* **Maximum iteration limit is mandatory.**  Every step execution
+  counts as one iteration; once ``max_iterations`` is reached the
+  agent stops, marks the task failed with a
+  ``max_iterations_exceeded`` outcome and never loops forever —
+  no matter how long the plan is.  The limit is validated at
+  construction (it must be a positive integer) and can be
+  overridden per run, but never removed.
+* **Failures stop the task honestly.**  A planning failure, an
+  execution failure or a failed verification ends the run with a
+  matching status; remaining steps are reported as *skipped*,
+  never as done.  An *uncertain* verification is recorded but does
+  not block an otherwise successful execution (unless
+  ``strict_verification=True``).
+* **No responsibility is duplicated.**  The Agent plans only via
+  the Planner, executes only via the Executor (which alone talks
+  to the ToolRegistry) and judges only via the Verifier.  It holds
+  no tool, model or platform logic of its own.
+
+The voice assistant (``AfnanAgent``) uses one of these as its
+central orchestration layer (``agent.orchestrator`` /
+``agent.run_task(goal)``) while its existing voice-command behaviour
+stays exactly as it was.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Any
+
+from afnan_ai.executor import (
+    ExecutionReport,
+    Executor,
+    StepExecutionResult,
+)
+from afnan_ai.planner import Planner, PlanningError, TaskPlan
+from afnan_ai.state import AgentState, TaskStatus
+from afnan_ai.verifier import (
+    VerificationReport,
+    VerificationResult,
+    VerificationStatus,
+    Verifier,
+)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class OrchestrationStatus(str, Enum):
+    COMPLETED = "completed"
+    FAILED = "failed"
+    PLANNING_FAILED = "planning_failed"
+    MAX_ITERATIONS_EXCEEDED = "max_iterations_exceeded"
+
+
+@dataclass
+class IterationRecord:
+    """One loop iteration: a step executed and verified."""
+
+    iteration: int
+    step_id: str
+    execution: StepExecutionResult
+    verification: VerificationResult | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "iteration": self.iteration,
+            "step_id": self.step_id,
+            "execution": self.execution.to_dict(),
+            "verification": (
+                self.verification.to_dict() if self.verification else None
+            ),
+        }
+
+
+@dataclass
+class OrchestrationResult:
+    """The outcome of one full orchestrated task run."""
+
+    goal: str
+    status: OrchestrationStatus
+    state: AgentState
+    plan: TaskPlan | None = None
+    execution: ExecutionReport | None = None
+    verification: VerificationReport | None = None
+    iterations: int = 0
+    max_iterations: int = 10
+    error: dict[str, Any] | None = None
+    records: list[IterationRecord] = field(default_factory=list)
+    started_at: str | None = None
+    finished_at: str | None = None
+
+    @property
+    def success(self) -> bool:
+        return self.status == OrchestrationStatus.COMPLETED
+
+    @property
+    def task_id(self) -> str:
+        return self.state.task_id
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "goal": self.goal,
+            "status": self.status.value,
+            "success": self.success,
+            "task_id": self.task_id,
+            "iterations": self.iterations,
+            "max_iterations": self.max_iterations,
+            "plan": self.plan.to_dict() if self.plan else None,
+            "execution": self.execution.to_dict() if self.execution else None,
+            "verification": (
+                self.verification.to_dict() if self.verification else None
+            ),
+            "records": [r.to_dict() for r in self.records],
+            "error": self.error,
+            "state": self.state.summary(),
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+        }
+
+    def to_json(self, *, indent: int | None = 2) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent, default=str)
+
+    def summary(self) -> str:
+        return (
+            f"Task {self.task_id} ({self.goal!r}): {self.status.value} "
+            f"after {self.iterations}/{self.max_iterations} iteration(s)"
+        )
+
+
+class Agent:
+    """Central orchestrator connecting AgentState, Planner,
+    Executor and Verifier.
+
+    ``max_iterations`` is required by design: it defaults to 10 and
+    must be a positive integer, so an orchestrated task can never
+    loop forever.
+    """
+
+    DEFAULT_MAX_ITERATIONS = 10
+
+    def __init__(
+        self,
+        *,
+        planner: Planner,
+        executor: Executor,
+        verifier: Verifier,
+        state: AgentState | None = None,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        strict_verification: bool = False,
+    ):
+        if planner is None or executor is None or verifier is None:
+            raise ValueError(
+                "Agent needs a Planner, an Executor and a Verifier"
+            )
+        self.planner = planner
+        self.executor = executor
+        self.verifier = verifier
+        self.state: AgentState | None = state
+        self.max_iterations = self._validate_limit(max_iterations)
+        self.strict_verification = bool(strict_verification)
+
+    @staticmethod
+    def _validate_limit(value: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(
+                f"max_iterations must be a positive integer, got {value!r}"
+            )
+        return value
+
+    @classmethod
+    def from_components(
+        cls,
+        llm_provider,
+        tool_registry,
+        *,
+        state: AgentState | None = None,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        strict_verification: bool = False,
+    ) -> "Agent":
+        """Build an Agent (and its Planner/Executor/Verifier) from a
+        raw LLM provider + ToolRegistry — handy outside AfnanAgent."""
+        return cls(
+            planner=Planner(llm_provider, tool_registry),
+            executor=Executor(tool_registry),
+            verifier=Verifier(),
+            state=state,
+            max_iterations=max_iterations,
+            strict_verification=strict_verification,
+        )
+
+    # -- main entry point -------------------------------------------------
+    def run(
+        self,
+        goal: str,
+        *,
+        state: AgentState | None = None,
+        max_iterations: int | None = None,
+    ) -> OrchestrationResult:
+        """Run one complete task lifecycle for *goal*.
+
+        Never raises for planning or step failures — they come back
+        on the OrchestrationResult with a matching status.  Raises
+        ValueError only for an unusable goal/limit argument.
+        """
+        if not goal or not str(goal).strip():
+            raise ValueError("Agent.run needs a non-empty goal")
+        goal = str(goal).strip()
+        limit = (
+            self._validate_limit(max_iterations)
+            if max_iterations is not None
+            else self.max_iterations
+        )
+
+        task_state = self._prepare_state(goal, state)
+        self.state = task_state
+        result = OrchestrationResult(
+            goal=goal,
+            status=OrchestrationStatus.FAILED,  # until proven completed
+            state=task_state,
+            max_iterations=limit,
+            started_at=_now_iso(),
+        )
+        task_state.add_observation(
+            f"Agent received goal: {goal}", source="agent"
+        )
+
+        # 1) Plan ------------------------------------------------------------
+        try:
+            plan = self.planner.plan(goal, state=task_state)
+        except PlanningError as e:
+            return self._finish_planning_failure(result, e)
+        except Exception as e:  # a Planner breaking its contract
+            return self._finish_planning_failure(
+                result,
+                PlanningError(f"Planner failed unexpectedly: {e}"),
+            )
+        if plan is None or not getattr(plan, "steps", None):
+            return self._finish_planning_failure(
+                result,
+                PlanningError("Planner returned an empty plan"),
+            )
+
+        result.plan = plan
+        task_state.metadata["plan"] = plan.to_dict()
+        task_state.add_observation(
+            f"Agent generated plan {plan.plan_id} with "
+            f"{len(plan.steps)} step(s) for goal: {goal}",
+            source="agent",
+        )
+
+        # 2) Execute → verify, one step at a time ----------------------------
+        executed: list[StepExecutionResult] = []
+        verifications: list[VerificationResult] = []
+        failure_error: dict[str, Any] | None = None
+        outcome = OrchestrationStatus.COMPLETED
+
+        for index, step in enumerate(plan.steps):
+            if result.iterations >= limit:
+                outcome = OrchestrationStatus.MAX_ITERATIONS_EXCEEDED
+                failure_error = {
+                    "code": "max_iterations_exceeded",
+                    "message": (
+                        f"Maximum iteration limit ({limit}) reached; "
+                        f"step {step.step_id!r} and the remaining "
+                        f"{len(plan.steps) - index} step(s) were not executed"
+                    ),
+                    "details": {
+                        "max_iterations": limit,
+                        "next_step": step.step_id,
+                    },
+                }
+                break
+
+            result.iterations += 1
+            try:
+                execution_result = self.executor.execute_step(
+                    step, state=task_state, plan_id=plan.plan_id
+                )
+            except Exception as e:
+                # Executor raises only for a malformed step; record
+                # it as this step's failure instead of crashing.
+                execution_result = StepExecutionResult(
+                    step_id=step.step_id,
+                    description=step.description,
+                    tool_name=step.tool_name,
+                    arguments=dict(step.arguments)
+                    if isinstance(step.arguments, dict)
+                    else {},
+                    expected_result=step.expected_result,
+                    success=False,
+                    error={
+                        "code": "execution_failed",
+                        "message": f"Step could not be executed: {e}",
+                        "tool": step.tool_name,
+                        "details": {},
+                    },
+                    finished_at=_now_iso(),
+                )
+                task_state.start_step(step.step_id)
+                task_state.add_tool_result(
+                    step.tool_name,
+                    success=False,
+                    error=str(e),
+                    metadata={"step_id": step.step_id, "plan_id": plan.plan_id},
+                )
+                task_state.fail_step(step.step_id, str(e))
+
+            executed.append(execution_result)
+
+            verification_result = self._verify(step, execution_result, task_state)
+            if verification_result is not None:
+                verifications.append(verification_result)
+            result.records.append(
+                IterationRecord(
+                    iteration=result.iterations,
+                    step_id=step.step_id,
+                    execution=execution_result,
+                    verification=verification_result,
+                )
+            )
+            task_state.add_observation(
+                f"Agent iteration {result.iterations}: step "
+                f"{step.step_id} executed "
+                f"({'success' if execution_result.success else 'failed'})"
+                + (
+                    f", verification {verification_result.status.value}"
+                    if verification_result
+                    else ""
+                ),
+                source="agent",
+            )
+
+            if not execution_result.success:
+                outcome = OrchestrationStatus.FAILED
+                failure_error = execution_result.error or {
+                    "code": "execution_failed",
+                    "message": f"Step {step.step_id!r} failed",
+                }
+                break
+            if (
+                verification_result is not None
+                and verification_result.status == VerificationStatus.FAILED
+            ):
+                # A verified-wrong outcome is a task failure: the
+                # action ran, but not the action that was expected.
+                outcome = OrchestrationStatus.FAILED
+                failure_error = {
+                    "code": "verification_failed",
+                    "message": verification_result.reason,
+                    "details": {"step_id": step.step_id},
+                }
+                break
+            if (
+                self.strict_verification
+                and verification_result is not None
+                and verification_result.status == VerificationStatus.UNCERTAIN
+            ):
+                outcome = OrchestrationStatus.FAILED
+                failure_error = {
+                    "code": "verification_uncertain",
+                    "message": (
+                        f"Step {step.step_id!r} could not be verified "
+                        f"and strict_verification is on: "
+                        f"{verification_result.reason}"
+                    ),
+                    "details": {"step_id": step.step_id},
+                }
+                break
+
+        # Remaining steps (after failure / limit) are skipped, not done
+        remaining = plan.steps[len(executed):]
+        skipped_results = [
+            StepExecutionResult(
+                step_id=s.step_id,
+                description=s.description,
+                tool_name=s.tool_name,
+                arguments=dict(s.arguments) if isinstance(s.arguments, dict) else {},
+                expected_result=s.expected_result,
+                success=False,
+                skipped=True,
+                error={
+                    "code": "skipped",
+                    "message": (
+                        f"Step {s.step_id!r} was not executed because "
+                        f"the task stopped ({outcome.value})"
+                    ),
+                    "tool": s.tool_name,
+                    "details": {},
+                },
+                finished_at=_now_iso(),
+            )
+            for s in remaining
+        ]
+
+        # 3) Aggregate reports + final state --------------------------------
+        result.execution = ExecutionReport(
+            plan_id=plan.plan_id,
+            goal=goal,
+            task_id=task_state.task_id,
+            status="completed" if outcome == OrchestrationStatus.COMPLETED else "failed",
+            step_results=executed + skipped_results,
+            started_at=result.started_at,
+            finished_at=_now_iso(),
+        )
+        result.verification = VerificationReport(
+            plan_id=plan.plan_id,
+            goal=goal,
+            task_id=task_state.task_id,
+            results=verifications,
+        )
+        result.status = outcome
+        result.error = failure_error
+        result.finished_at = _now_iso()
+
+        if outcome == OrchestrationStatus.COMPLETED:
+            task_state.complete_task(result=result.summary())
+        else:
+            task_state.fail_task(
+                (failure_error or {}).get("message") or f"Task {outcome.value}"
+            )
+        task_state.add_observation(
+            f"Agent finished: {result.summary()}", source="agent"
+        )
+        return result
+
+    # Alias in the vocabulary used by the agent layer
+    run_task = run
+    execute_goal = run
+
+    # -- helpers ---------------------------------------------------------
+    def _prepare_state(
+        self, goal: str, state: AgentState | None
+    ) -> AgentState:
+        candidate = state if state is not None else self.state
+        if candidate is not None and not candidate.is_terminal:
+            if candidate.status == TaskStatus.PENDING:
+                candidate.start_task()
+            return candidate
+        # Fresh task (none yet, or the previous one already ended)
+        return AgentState.create(goal)
+
+    def _verify(
+        self,
+        step,
+        execution_result: StepExecutionResult,
+        state: AgentState,
+    ) -> VerificationResult | None:
+        try:
+            return self.verifier.verify_step(
+                step, execution_result, state=state
+            )
+        except Exception as e:  # a broken verifier must not crash the task
+            result = VerificationResult(
+                step_id=step.step_id,
+                tool_name=step.tool_name,
+                status=VerificationStatus.UNCERTAIN,
+                expected_result=step.expected_result or "",
+                actual_output=execution_result.output,
+                reason=f"Verifier could not judge this step: {e}",
+                confidence=0.0,
+                evidence={"source": "agent", "verifier_error": str(e)},
+            )
+            self.verifier._record(state, result)  # same recording path
+            return result
+
+    def _finish_planning_failure(
+        self,
+        result: OrchestrationResult,
+        error: PlanningError,
+    ) -> OrchestrationResult:
+        result.status = OrchestrationStatus.PLANNING_FAILED
+        result.error = error.to_dict()
+        result.finished_at = _now_iso()
+        result.state.fail_task(error.error.message)
+        result.state.add_observation(
+            f"Agent could not plan the task: {error.error.message}",
+            source="agent",
+        )
+        return result

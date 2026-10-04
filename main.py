@@ -130,6 +130,19 @@ def execute_and_verify(plan, state=None):
     return _agent.execute_and_verify(plan, state=state)
 
 
+def get_orchestrator():
+    """Return the central Agent orchestrator (Planner + Executor +
+    Verifier connected, managing the complete task lifecycle)."""
+    return _agent.orchestrator
+
+
+def run_task(goal, state=None, max_iterations=None):
+    """Run a complete orchestrated task: create/update state,
+    generate a plan, execute and verify step by step, and finish
+    or stop at the maximum-iteration limit."""
+    return _agent.run_task(goal, state=state, max_iterations=max_iterations)
+
+
 def listen_command(timeout=5, phrase_time=6):
     return _agent.listen_command(timeout=timeout, phrase_time=phrase_time)
 
