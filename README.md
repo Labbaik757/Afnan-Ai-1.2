@@ -165,6 +165,9 @@ Afnan-Ai-1.2
 │   ├── orchestrator.py      (Agent — central orchestrator: state +
 │   │                         planner + executor + verifier, full
 │   │                         task lifecycle, max-iteration limit)
+│   ├── recovery.py          (RecoveryManager — replans after a
+│   │                         failed/uncertain step, never repeats
+│   │                         a failed action, attempts recorded)
 │   ├── llm/
 │   │   ├── base.py          (LLMProvider interface + typed errors)
 │   │   ├── ollama.py        (OllamaProvider — local Ollama, llama3)
@@ -542,6 +545,59 @@ The voice assistant uses it as its orchestration layer
 is unchanged. Tests for successful completion, planning failure,
 execution failure, unknown tools, the maximum-iteration stop and
 voice-assistant integration live in `tests/test_orchestrator.py`.
+
+Every request the user speaks (after the wake word) or types goes
+through this orchestrator: `agent.handle_request(text)` (also
+`main.handle_request(text)`, and `agent.process_command(text)` for
+backwards compatibility) delegates the actual task to
+`Agent.run()` and speaks the outcome.  Session control
+("stop afnan", "introduce yourself") is handled directly, as
+before.  If the model cannot plan at all (e.g. it is offline),
+the request falls back to the clearly isolated legacy routing in
+`agent._handle_legacy_command` — the pre-Tool command patterns,
+some of which use capabilities that are not Tools yet (opening a
+folder by name, playing a song).  Nothing is broken by the
+migration; those patterns are marked for later migration into
+Tools.  `main.py` itself stays a thin set of delegates with no
+planning, execution, verification or recovery logic.
+
+# 🩹 Recovery — Replanning After a Failed or Uncertain Step
+
+`afnan_ai/recovery.py` contains the `RecoveryManager`.  When a
+step fails, or the Verifier cannot confirm it (uncertain/failed),
+the orchestrator does **not** blindly run the same action again.
+Instead, Recovery hands the Planner:
+
+- the original goal,
+- the failure reason,
+- the current `AgentState` (completed steps, observations,
+  earlier attempts), and
+- the exact previous attempt (tool + arguments) that did not work,
+
+and asks for a *different* plan for the remaining work.
+
+- **No blind repetition** — a recovery plan containing any
+  already-failed action (same tool, same arguments) is rejected
+  and never executed.
+- **Limited attempts** — `max_recovery_attempts` (default 2;
+  0 disables recovery) caps replanning, and recovered steps still
+  count against the orchestrator's maximum-iteration limit.
+- **Fully recorded** — every attempt (replanned, planner-failed,
+  rejected, limit-reached) is stored in
+  `state.metadata["recovery_attempts"]`, noted as a `recovery`
+  observation, and returned on
+  `result.recovery_attempts`.
+- **No duplicated responsibilities** — Recovery only replans via
+  the Planner; execution stays with the Executor, judgement with
+  the Verifier, and the decision of when to recover or give up
+  with the Agent.  `tools/check_compatibility.py` AST-checks that
+  `recovery.py` never executes a tool.
+
+Tests for successful recovery, blind-repeat rejection,
+planner-replan failure, the recovery-attempt limit and the
+iteration cap live in `tests/test_recovery.py`; voice-independent
+Agent invocation and entry-point/backward-compatibility
+integration tests live in `tests/test_entry_points.py`.
 
 # ✅ Compatibility Tests
 
