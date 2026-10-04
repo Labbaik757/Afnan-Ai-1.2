@@ -139,7 +139,6 @@ PyAudio
 PyAutoGUI
 pywhatkit
 ollama
-Pillow
 pyttsx3
 ```
 
@@ -168,6 +167,9 @@ Afnan-Ai-1.2
 │   ├── recovery.py          (RecoveryManager — replans after a
 │   │                         failed/uncertain step, never repeats
 │   │                         a failed action, attempts recorded)
+│   ├── config.py            (AgentConfig — wake word, limits,
+│   │                         default model; env overridable)
+│   ├── log_config.py        (structured logging, stdlib only)
 │   ├── llm/
 │   │   ├── base.py          (LLMProvider interface + typed errors)
 │   │   ├── ollama.py        (OllamaProvider — local Ollama, llama3)
@@ -184,8 +186,8 @@ Afnan-Ai-1.2
 │       ├── windows.py       (PowerShell speech, startfile, cmd start)
 │       ├── macos.py         (say, open / open -a, mdfind)
 │       └── linux.py         (espeak/spd-say, xdg-open)
-├── gif_viewer.py
-├── tests/                   (compatibility tests, run on any host OS)
+├── tests/                   (unit + integration + end-to-end tests,
+│                             run on any host OS)
 ├── tools/check_compatibility.py
 ├── requirements.txt
 ├── README.md
@@ -598,6 +600,37 @@ planner-replan failure, the recovery-attempt limit and the
 iteration cap live in `tests/test_recovery.py`; voice-independent
 Agent invocation and entry-point/backward-compatibility
 integration tests live in `tests/test_entry_points.py`.
+
+# 🏁 Phase 1 Status — Clean, Tested, Cross-Platform
+
+Phase 1 (the core agent architecture) is complete and verified
+end to end:
+
+- **Full pipeline tested** — `tests/test_end_to_end.py` drives a
+  goal through AgentState → Planner → Executor → Verifier →
+  Recovery/Replanning → Completion/Failure, through the voice and
+  text entry points, and on all three platform adapters
+  (Windows/macOS/Linux, with OS calls mocked).
+- **246 automated tests, all passing**, plus
+  `tools/check_compatibility.py` AST guards that keep the
+  component responsibilities separate (Planner never executes,
+  Executor dispatches only via ToolRegistry, Verifier and
+  Recovery never execute, orchestrator never bypasses Executor).
+- **Backward compatibility verified** — wake word, speech
+  recognition, text input, TTS and every pre-existing voice
+  command behave as before; the legacy-only commands are isolated
+  in `agent._handle_legacy_command` for later Tool migration.
+- **Clean project** — components log through structured stdlib
+  logging (`afnan_ai/log_config.py`, silent until configured),
+  tunables live in `AgentConfig` (`afnan_ai/config.py`,
+  environment-overridable), dead code (the unused tkinter
+  `gif_viewer.py`) and unused dependencies/imports were removed,
+  and `requirements.txt` contains only what the code imports or
+  a feature requires.
+
+The project is ready for Phase 2: browser / computer-use agent
+development on top of the Tool system, with new capabilities
+added as registered Tools without touching the core pipeline.
 
 # ✅ Compatibility Tests
 
