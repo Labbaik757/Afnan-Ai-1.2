@@ -160,6 +160,8 @@ Afnan-Ai-1.2
 │   │                         validated TaskPlan, never executes)
 │   ├── executor.py          (Executor — runs a TaskPlan step by step
 │   │                         via ToolRegistry, records AgentState)
+│   ├── verifier.py          (Verifier — checks actual results vs
+│   │                         expected_result, never re-executes)
 │   ├── llm/
 │   │   ├── base.py          (LLMProvider interface + typed errors)
 │   │   ├── ollama.py        (OllamaProvider — local Ollama, llama3)
@@ -427,6 +429,59 @@ Tests for successful execution, failed and crashing tools,
 invalid tools, invalid arguments, skipped steps, AgentState
 updates and the no-arbitrary-code guarantee live in
 `tests/test_executor.py`.
+
+# 🔍 Verifier — Did the Step Actually Do What Was Expected?
+
+`afnan_ai/verifier.py` contains an independent `Verifier` that
+checks each executed step's **actual** result against that step's
+**expected_result**.  It holds no ToolRegistry and no model, so it
+cannot re-run anything — it only analyzes the structured execution
+result (from the Executor), plus any evidence already in
+`AgentState` (completed/failed step records, tool results,
+observations).
+
+```python
+from afnan_ai.verifier import Verifier, VerificationStatus
+
+verifier = Verifier()  # or: agent.verifier
+result = verifier.verify_step(step, execution_result, state=state)
+result.status      # VerificationStatus.VERIFIED / FAILED / UNCERTAIN
+result.reason      # human-readable explanation
+result.confidence  # 0.0–1.0 evidence strength
+
+report = verifier.verify_plan(plan, execution_report, state=state)
+report.status      # failed if any step failed, verified only if all verified
+```
+
+- **verified** — the execution succeeded and the actual output
+  confirms the expected outcome (e.g. expected "Chrome is launched",
+  output `{"application": "chrome", "launched": true}`)
+- **failed** — the execution failed or was skipped, the output flags
+  a non-outcome (`launched: false`), a different application actually
+  ran, or the output shares nothing with the expected outcome
+- **uncertain** — no result/evidence, no or vague `expected_result`,
+  success with no observable output, only partial keyword overlap,
+  or conflicting evidence between the execution result and
+  `AgentState`
+
+Every judgement is recorded in `AgentState` — a `verifier`
+observation, a structured entry in
+`state.metadata["verifications"]`, and an annotation on the step's
+record — without adding a tool result, because recording a
+judgement is not executing a tool.  The analysis is deterministic
+(no LLM call), so the same result always verifies the same way.
+
+The agent ties the three phases together without merging them:
+
+```python
+report, verification = agent.execute_and_verify(plan)  # Executor, then Verifier
+```
+
+Tests for verified, failed and uncertain outcomes, contradictions,
+AgentState recording and the never-re-executes guarantee live in
+`tests/test_verifier.py`; `tools/check_compatibility.py`
+additionally AST-checks that `verifier.py` contains no execution
+call.
 
 # ✅ Compatibility Tests
 

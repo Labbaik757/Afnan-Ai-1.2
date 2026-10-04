@@ -19,6 +19,7 @@ from afnan_ai.planner import Planner, TaskPlan
 from afnan_ai.platform import get_adapter
 from afnan_ai.state import AgentState
 from afnan_ai.tools import Tool, ToolRegistry, create_default_registry
+from afnan_ai.verifier import Verifier
 
 # Default agent + adapter for this machine (auto-selected at runtime)
 adapter = get_adapter()
@@ -111,6 +112,22 @@ def execute_plan(plan, state=None):
 def plan_and_execute(goal, state=None):
     """Plan a goal, then execute the resulting TaskPlan."""
     return _agent.plan_and_execute(goal, state=state)
+
+
+def get_verifier():
+    """Return the Verifier (judges results — it never runs tools)."""
+    return _agent.verifier
+
+
+def verify_plan(plan, execution, state=None):
+    """Verify an executed plan's steps against their expected
+    results, using only the execution results and AgentState."""
+    return _agent.verify_plan(plan, execution, state=state)
+
+
+def execute_and_verify(plan, state=None):
+    """Execute a TaskPlan, then verify every step's outcome."""
+    return _agent.execute_and_verify(plan, state=state)
 
 
 def listen_command(timeout=5, phrase_time=6):

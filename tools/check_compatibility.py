@@ -84,6 +84,28 @@ def main() -> int:
     else:
         print("OK: executor dispatches only via ToolRegistry, no code evaluation")
 
+    # The Verifier must never re-execute a tool — AST-check that
+    # verifier.py contains no execution/dispatch call at all.
+    verifier_tree = ast.parse(
+        (ROOT / "afnan_ai" / "verifier.py").read_text(encoding="utf-8")
+    )
+    verifier_calls = {
+        node.func.attr
+        for node in ast.walk(verifier_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    } | {
+        node.func.id
+        for node in ast.walk(verifier_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    execution_calls = {"execute", "execute_or_raise", "run", "eval", "exec", "compile"}
+    found_execution = sorted(execution_calls & verifier_calls)
+    if found_execution:
+        failures.append(f"verifier executes tools ({found_execution})")
+        print(f"FAIL: verifier.py calls {found_execution} — Verifier must only analyze results")
+    else:
+        print("OK: verifier never executes tools")
+
     for path in sorted(ROOT.rglob("*.py")):
         if ".git" in path.parts or "__pycache__" in path.parts:
             continue

@@ -32,6 +32,7 @@ from afnan_ai.platform.base import PlatformAdapter
 from afnan_ai.planner import Planner, TaskPlan
 from afnan_ai.state import AgentState
 from afnan_ai.tools import ToolRegistry, ToolResult, create_default_registry
+from afnan_ai.verifier import VerificationReport, VerificationResult, Verifier
 
 try:
     import speech_recognition as sr
@@ -65,6 +66,7 @@ class AfnanAgent:
         tool_registry: ToolRegistry | None = None,
         planner: Planner | None = None,
         executor: Executor | None = None,
+        verifier: Verifier | None = None,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -88,6 +90,9 @@ class AfnanAgent:
         # Executor runs a TaskPlan's steps through the same registry,
         # recording every result in AgentState
         self.executor: Executor = executor or Executor(self.tools)
+        # Verifier judges executed steps against their expected
+        # results — it analyzes results/state, never re-executes
+        self.verifier: Verifier = verifier or Verifier()
         # Centralized, serializable task state.  Components may pass
         # their own AgentState, read ``agent.state``, or ignore it —
         # existing behaviour is unchanged when they do.
@@ -206,6 +211,45 @@ class AfnanAgent:
         failures come back on the ExecutionReport."""
         plan = self.create_plan(goal, state=state)
         return self.execute_plan(plan, state=state)
+
+    # -- verification (analyzes results — never re-executes tools) ------------
+    def verify_step(
+        self,
+        step,
+        execution_result=None,
+        state: AgentState | None = None,
+    ) -> VerificationResult:
+        """Verify one executed step against its expected_result
+        using the execution result and AgentState evidence."""
+        effective_state = state if state is not None else self.state
+        return self.verifier.verify_step(
+            step, execution_result, state=effective_state
+        )
+
+    def verify_plan(
+        self,
+        plan: TaskPlan,
+        execution,
+        state: AgentState | None = None,
+    ) -> VerificationReport:
+        """Verify every step of an executed plan and record the
+        judgements in AgentState."""
+        effective_state = state if state is not None else self.state
+        return self.verifier.verify_plan(
+            plan, execution, state=effective_state
+        )
+
+    def execute_and_verify(
+        self,
+        plan: TaskPlan,
+        state: AgentState | None = None,
+    ) -> tuple[ExecutionReport, VerificationReport]:
+        """Execute a plan, then verify each step's actual result
+        against its expected_result (verification itself runs no
+        tool again)."""
+        report = self.execute_plan(plan, state=state)
+        verification = self.verify_plan(plan, report, state=state)
+        return report, verification
 
     def _open_url(self, url: str) -> bool:
         return self.execute_tool("open_url", {"url": url}).success
@@ -511,6 +555,7 @@ def create_agent(
     tool_registry: ToolRegistry | None = None,
     planner: Planner | None = None,
     executor: Executor | None = None,
+    verifier: Verifier | None = None,
 ) -> AfnanAgent:
     return AfnanAgent(
         adapter=adapter,
@@ -519,4 +564,5 @@ def create_agent(
         tool_registry=tool_registry,
         planner=planner,
         executor=executor,
+        verifier=verifier,
     )
