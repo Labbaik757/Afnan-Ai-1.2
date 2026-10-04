@@ -19,6 +19,7 @@ from pathlib import Path
 from afnan_ai import speech as _speech
 from afnan_ai.platform import get_adapter
 from afnan_ai.platform.base import PlatformAdapter
+from afnan_ai.state import AgentState
 
 try:
     import speech_recognition as sr
@@ -47,9 +48,50 @@ GIF_PATH = "afnan_animation.gif"
 class AfnanAgent:
     """Platform-agnostic voice assistant."""
 
-    def __init__(self, adapter: PlatformAdapter | None = None):
+    def __init__(
+        self,
+        adapter: PlatformAdapter | None = None,
+        state: AgentState | None = None,
+        *,
+        track_state: bool = True,
+    ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
+        # Centralized, serializable task state.  Components may pass
+        # their own AgentState, read ``agent.state``, or ignore it —
+        # existing behaviour is unchanged when they do.
+        self.track_state = track_state
+        self.state: AgentState | None = state
+
+    # -- state helpers ---------------------------------------------------
+    def start_task(self, goal: str) -> AgentState:
+        """Start tracking a new task and return its AgentState."""
+        self.state = AgentState.create(goal)
+        self.state.start_task()
+        return self.state
+
+    def _state_begin(self, command: str) -> AgentState | None:
+        if not self.track_state:
+            return None
+        if self.state is None or self.state.is_terminal:
+            self.state = AgentState.create(command or "voice command")
+            self.state.start_task()
+        self.state.add_observation(command, source="command")
+        self.state.start_step(command or "voice command")
+        return self.state
+
+    def _state_succeed(self, result=None) -> None:
+        if self.state is not None and self.track_state:
+            # complete the running step, but keep the task running so
+            # the agent can take the next command in the same session
+            if self.state.current_step:
+                self.state.complete_step(self.state.current_step, result=result)
+
+    def _state_fail(self, error: str) -> None:
+        if self.state is not None and self.track_state:
+            if self.state.current_step:
+                self.state.fail_step(self.state.current_step, error)
+            self.state.add_tool_result("process_command", success=False, error=error)
 
     # -- speech --------------------------------------------------------
     def speak(self, text: str) -> None:
@@ -188,7 +230,9 @@ What do you want me to do?
 
     # -- command routing (existing behaviour preserved) ---------------------------
     def process_command(self, command: str) -> None:
-        command = (command or "").lower().strip()
+        raw_command = command or ""
+        command = raw_command.lower().strip()
+        self._state_begin(command)
         try:
             if "open visual studio code" in command or "open vs code" in command:
                 self.speak("Opening Visual Studio Code")
@@ -265,10 +309,15 @@ What do you want me to do?
                 reply = self.ask_local_ai(command)
                 self.speak(reply)
 
+            self._state_succeed(result="ok")
+
         except SystemExit:
+            # "stop afnan" is a successful stop, not a failure
+            self._state_succeed(result="stopped")
             raise
         except Exception as e:
             print("Command Error:", e)
+            self._state_fail(str(e))
             self.speak("Error boss")
 
     # -- main loop ------------------------------------------------------------------
@@ -293,5 +342,8 @@ What do you want me to do?
                 pass
 
 
-def create_agent(adapter: PlatformAdapter | None = None) -> AfnanAgent:
-    return AfnanAgent(adapter=adapter)
+def create_agent(
+    adapter: PlatformAdapter | None = None,
+    state: AgentState | None = None,
+) -> AfnanAgent:
+    return AfnanAgent(adapter=adapter, state=state)

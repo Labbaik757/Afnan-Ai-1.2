@@ -14,6 +14,7 @@ Usage:
 
 from afnan_ai.agent import AfnanAgent, create_agent
 from afnan_ai.platform import get_adapter
+from afnan_ai.state import AgentState
 
 # Default agent + adapter for this machine (auto-selected at runtime)
 adapter = get_adapter()
@@ -74,6 +75,15 @@ def process_command(command):
 
 def start_afnan():
     _agent.start()
+
+
+def get_state():
+    """Return the current centralized AgentState (or None)."""
+    return _agent.state
+
+
+def start_task(goal):
+    return _agent.start_task(goal)
 
 
 if __name__ == "__main__":

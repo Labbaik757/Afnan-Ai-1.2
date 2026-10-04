@@ -153,6 +153,8 @@ Afnan-Ai-1.2
 ├── main.py                  (thin entry point, backwards compatible)
 ├── afnan_ai/
 │   ├── agent.py             (core agent — no OS-specific code)
+│   ├── state.py             (centralized AgentState — goal, steps,
+│   │                         observations, tool results, status)
 │   ├── speech.py            (pyttsx3 first, adapter speech as fallback)
 │   └── platform/
 │       ├── base.py          (PlatformAdapter interface)
@@ -187,6 +189,43 @@ core agent never touches an OS command directly:
 
 A test in `tests/test_agent_commands.py` fails if an OS-specific
 call ever leaks back into the core agent.
+
+# 🧠 AgentState — Centralized Task State
+
+`afnan_ai/state.py` provides one serializable `AgentState` per task.
+Every component (voice agent, platform adapters, tests, a future UI)
+can read and update the same object:
+
+```python
+from afnan_ai.state import AgentState
+
+state = AgentState.create("Open Chrome and search for Python")
+state.start_step("open chrome")
+state.add_observation("User said: open chrome", source="microphone")
+state.add_tool_result("chrome", success=True, output="opened")
+state.complete_step("open chrome", result="opened")
+state.complete_task()
+
+data = state.to_json()              # save / send anywhere
+restored = AgentState.from_json(data)  # lossless on any OS
+state.save("state.json")            # or AgentState.load("state.json")
+```
+
+It tracks the task **goal**, **current step**, **completed steps**,
+**failed steps** (with errors), **observations**, **tool results**
+and **status** (`pending`, `running`, `paused`, `completed`,
+`failed`, `cancelled`).  It uses only the Python standard library
+and `pathlib`, so a state saved on Windows loads identically on
+macOS and Linux.
+
+The voice agent updates it automatically for every command
+(`agent.state`), you can start an explicit task with
+`agent.start_task(goal)`, share one state between components by
+passing `AfnanAgent(state=...)`, or turn tracking off with
+`track_state=False` — existing behaviour is unchanged either way.
+
+Tests for creation, updating, JSON/file serialization and
+failure-state handling live in `tests/test_agent_state.py`.
 
 # ✅ Compatibility Tests
 
