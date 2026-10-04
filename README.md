@@ -1,9 +1,9 @@
-# 🤖 Afnan AI 1.2 (macOS Edition)
+# 🤖 Afnan AI 1.2 (Windows + macOS Edition)
 
 Afnan AI is a personal voice assistant built with Python and powered by Ollama. It can understand voice commands, open applications, search the web, play music, capture screenshots, and assist you with everyday tasks using natural voice interaction.
 
 > **Version:** 1.2  
-> **Platform:** macOS  
+> **Platform:** Windows 10/11, macOS, Linux  
 > **Language:** Python
 
 ---
@@ -12,18 +12,18 @@ Afnan AI is a personal voice assistant built with Python and powered by Ollama. 
 
 - 🎤 Voice Recognition
 - 🤖 Local AI Chat using Ollama (Llama 3)
-- 🗣️ Text-to-Speech Responses
+- 🗣️ Text-to-Speech Responses (Windows SAPI / macOS `say`, or pyttsx3)
 - 💻 Open Visual Studio Code
-- 🌐 Open Google Chrome
-- 🧭 Open Safari
-- 💬 Open WhatsApp
+- 🌐 Open Google Chrome / Microsoft Edge
+- 🧭 Open Safari (macOS) — on Windows/Linux it opens your default browser instead
+- 💬 Open WhatsApp (app on macOS, WhatsApp/protocol or WhatsApp Web on Windows)
 - ▶️ Open YouTube
-- 📂 Smart Folder Search
+- 📂 Smart Folder Search (Downloads, Desktop, Documents, Pictures, Music, Videos)
 - 🎵 Play Songs on YouTube
 - 🔎 Google Search
 - 📺 YouTube Search
 - 📸 Screenshot Capture
-- 🎬 Startup GIF Animation
+- 🎬 Startup GIF Animation (in your browser, on every platform)
 - 🎯 Wake Word Detection ("Afnan")
 - ⚡ Fast Voice Command Processing
 
@@ -34,10 +34,10 @@ Afnan AI is a personal voice assistant built with Python and powered by Ollama. 
 | Voice Command | Action |
 |---------------|--------|
 | Afnan | Activate the assistant |
-| Open Visual Studio Code | Opens VS Code |
-| Open VS Code | Opens VS Code |
-| Open Safari | Opens Safari |
+| Open Visual Studio Code / Open VS Code | Opens VS Code |
 | Open Chrome | Opens Google Chrome |
+| Open Edge | Opens Microsoft Edge (Windows) |
+| Open Safari | Opens Safari (macOS only) |
 | Open YouTube | Opens YouTube |
 | Open WhatsApp | Opens WhatsApp |
 | Open Folder Downloads | Opens Downloads folder |
@@ -62,19 +62,29 @@ Afnan AI is a personal voice assistant built with Python and powered by Ollama. 
 - PyWhatKit
 - PyAutoGUI
 - Webbrowser
-- Subprocess
-- macOS Speech Engine
+- pyttsx3 (cross-platform text-to-speech, with OS speech as fallback)
 
 ---
 
 # 📦 Requirements
 
 - Python 3.10 or later
-- macOS
-- Ollama Installed
-- Llama 3 Model Installed
-- Working Microphone
-- Internet Connection (for online features)
+- Windows 10/11, macOS, or Linux
+- Ollama Installed, with the Llama 3 model: `ollama pull llama3`
+- Working Microphone (and microphone permission on Windows/macOS)
+- Internet Connection (for Google speech recognition and online features)
+
+### Windows note for PyAudio
+
+On Windows, `pip install PyAudio` sometimes needs a wheel. If it fails, install it with:
+
+```powershell
+pip install pipwin
+pipwin install pyaudio
+```
+
+or install a matching PyAudio wheel for your Python version, then run
+`pip install -r requirements.txt` again.
 
 ---
 
@@ -84,29 +94,44 @@ Afnan AI is a personal voice assistant built with Python and powered by Ollama. 
 
 ```bash
 git clone https://github.com/Labbaik757/Afnan-Ai-1.2.git
-```
-
-### Go to the project folder
-
-```bash
 cd Afnan-Ai-1.2
 ```
 
 ### Install dependencies
 
-```bash
-pip install -r requirements.txt
+Windows (PowerShell / CMD):
+
+```powershell
+python -m pip install -r requirements.txt
 ```
+
+macOS / Linux:
+
+```bash
+pip3 install -r requirements.txt
+```
+
+The macOS-only packages in `requirements.txt` are marked with
+`sys_platform == 'darwin'`, so pip automatically skips them on Windows
+and Linux — and the Windows-only `pywin32` is skipped on macOS/Linux.
 
 ### Run Afnan AI
 
-```bash
+Windows:
+
+```powershell
 python main.py
+```
+
+macOS / Linux:
+
+```bash
+python3 main.py
 ```
 
 ---
 
-# 📄 requirements.txt
+# 📄 requirements.txt (core)
 
 ```text
 SpeechRecognition
@@ -114,6 +139,8 @@ PyAudio
 PyAutoGUI
 pywhatkit
 ollama
+Pillow
+pyttsx3
 ```
 
 ---
@@ -124,12 +151,12 @@ ollama
 Afnan-Ai-1.2
 │
 ├── main.py
+├── gif_viewer.py
 ├── requirements.txt
 ├── README.md
 ├── afnan_animation.gif
 ├── afnan_animation.html
-├── screenshots/
-└── assets/
+└── screenshots/   (created when you take a screenshot)
 ```
 
 ---
@@ -137,12 +164,18 @@ Afnan-Ai-1.2
 # ⚙️ How It Works
 
 1. Launch Afnan AI.
-2. The startup animation will appear.
+2. The startup animation will appear in your browser.
 3. Afnan activates the microphone.
 4. Say **"Afnan"** to wake the assistant.
 5. Afnan replies **"Yes Boss"**.
 6. Speak your command.
-7. Afnan processes and executes your request.
+7. Afnan processes and executes your request, or asks the local
+   Ollama Llama 3 model when no command matches.
+
+On every platform it opens apps, folders and files with the native
+handler: `open` on macOS, `os.startfile` / `start` on Windows, and
+`xdg-open` on Linux. Folder search uses Spotlight (`mdfind`) on macOS
+and a home-folder search on Windows/Linux.
 
 ---
 
@@ -162,10 +195,13 @@ Afnan: Opening Chrome
 
 # ⚠️ Notes
 
-- This version is designed and tested on **macOS**.
-- Windows and Linux support are planned for future versions.
-- Ollama must be installed for AI chat functionality.
-- Make sure your microphone permission is enabled.
+- Windows, macOS and Linux are supported in this version.
+- On Windows, speech works out of the box with the built-in SAPI
+  voices (via pyttsx3 / PowerShell), no `say` command needed.
+- Safari is a macOS app; on Windows/Linux "Open Safari" opens your
+  default browser instead.
+- Ollama must be installed and running for AI chat functionality.
+- Make sure your microphone permission is enabled in your OS settings.
 
 ---
 
@@ -175,9 +211,6 @@ Afnan AI 1.7 is currently under active development and will introduce a major up
 
 ### Planned Features
 
-- 🌍 Windows Support
-- 🍎 macOS Support
-- 🐧 Linux Support
 - 🧠 Smarter AI Engine
 - ⚡ Faster Performance
 - 🎨 Modern User Interface
@@ -187,8 +220,6 @@ Afnan AI 1.7 is currently under active development and will introduce a major up
 - 💎 Exclusive Premium Features
 
 Stay tuned for future updates.
-
-Visit the official Afnan AI website regularly to check the latest announcements, new releases, feature updates, and upcoming versions.
 
 Thank you for supporting Afnan AI! ❤️
 
