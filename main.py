@@ -13,6 +13,7 @@ Usage:
 """
 
 from afnan_ai.agent import AfnanAgent, create_agent
+from afnan_ai.llm import LLMProvider, OllamaProvider, create_provider, get_default_provider
 from afnan_ai.platform import get_adapter
 from afnan_ai.state import AgentState
 
@@ -55,6 +56,15 @@ def launch_app(app_key):
 
 def ask_local_ai(prompt):
     return _agent.ask_local_ai(prompt)
+
+
+def ask_ai(prompt):
+    return _agent.ask_ai(prompt)
+
+
+def get_llm_provider():
+    """Return the LLMProvider the agent talks to (Ollama by default)."""
+    return _agent.llm
 
 
 def listen_command(timeout=5, phrase_time=6):

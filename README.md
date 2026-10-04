@@ -152,9 +152,14 @@ Afnan-Ai-1.2
 │
 ├── main.py                  (thin entry point, backwards compatible)
 ├── afnan_ai/
-│   ├── agent.py             (core agent — no OS-specific code)
+│   ├── agent.py             (core agent — no OS-specific code, no
+│   │                         direct model-client calls)
 │   ├── state.py             (centralized AgentState — goal, steps,
 │   │                         observations, tool results, status)
+│   ├── llm/
+│   │   ├── base.py          (LLMProvider interface + typed errors)
+│   │   ├── ollama.py        (OllamaProvider — local Ollama, llama3)
+│   │   └── factory.py       (provider registry / default provider)
 │   ├── speech.py            (pyttsx3 first, adapter speech as fallback)
 │   └── platform/
 │       ├── base.py          (PlatformAdapter interface)
@@ -226,6 +231,47 @@ passing `AfnanAgent(state=...)`, or turn tracking off with
 
 Tests for creation, updating, JSON/file serialization and
 failure-state handling live in `tests/test_agent_state.py`.
+
+# 🤖 LLMProvider — Model Abstraction
+
+The agent never calls Ollama (or any model client) directly.  It
+only talks to the `LLMProvider` interface in `afnan_ai/llm/base.py`:
+
+- `chat(messages) -> str` — send chat messages, get the reply text
+- `generate(prompt) -> str` — single-prompt convenience wrapper
+- Typed failures: `LLMUnavailableError` (not installed),
+  `LLMConnectionError` (service unreachable) and
+  `LLMInvalidResponseError` (unexpected response shape) — no
+  provider-specific exception leaks into the agent
+
+The existing Ollama integration lives in
+`afnan_ai/llm/ollama.py` as `OllamaProvider`, unchanged in
+behaviour: local Ollama, model `llama3`, reply taken from
+`response["message"]["content"]`, and the same spoken messages on
+failure ("AI is not available. Ollama is not installed." /
+"AI is not responding. Make sure Ollama is running.").
+
+Adding a future local or cloud model means writing one new
+provider class and registering it in `afnan_ai/llm/factory.py` —
+the agent's code does not change:
+
+```python
+from afnan_ai.agent import AfnanAgent
+from afnan_ai.llm import create_provider
+
+agent = AfnanAgent(llm_provider=create_provider("ollama", model="llama3"))
+# future: create_provider("some-cloud-provider", ...)
+```
+
+`agent.ask_ai(prompt)` is the interface-based entry point;
+`agent.ask_local_ai(prompt)` is kept as a backwards-compatible
+alias, and `main.py` exposes both plus `get_llm_provider()`.
+
+Tests for a successful response, a connection failure, an invalid
+response, an unavailable client and swapping in a completely
+different provider without touching the agent live in
+`tests/test_llm_provider.py`.  A test there also fails if a direct
+`ollama` call ever leaks back into `agent.py` or `main.py`.
 
 # ✅ Compatibility Tests
 

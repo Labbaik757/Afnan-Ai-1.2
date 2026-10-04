@@ -1,11 +1,14 @@
-"""Core Afnan AI agent — platform-agnostic.
+"""Core Afnan AI agent — platform-agnostic and model-agnostic.
 
 This module contains *only* assistant behaviour: wake word, command
 routing, web search, music, screenshots and local-AI fallback.  Every
 operating-system specific action is delegated to a
 :class:`~afnan_ai.platform.base.PlatformAdapter`, selected at runtime
-by :func:`afnan_ai.platform.get_adapter`.  There is intentionally no
-OS-specific launching, searching or speech code in this file.
+by :func:`afnan_ai.platform.get_adapter`, and every language-model
+call goes through the :class:`~afnan_ai.llm.LLMProvider` interface
+(default: :class:`~afnan_ai.llm.OllamaProvider`).  There is
+intentionally no OS-specific launching, searching or speech code,
+and no concrete model-client call, in this file.
 """
 
 from __future__ import annotations
@@ -17,6 +20,12 @@ from datetime import datetime
 from pathlib import Path
 
 from afnan_ai import speech as _speech
+from afnan_ai.llm import LLMProvider, get_default_provider
+from afnan_ai.llm.base import (
+    LLMConnectionError,
+    LLMInvalidResponseError,
+    LLMUnavailableError,
+)
 from afnan_ai.platform import get_adapter
 from afnan_ai.platform.base import PlatformAdapter
 from afnan_ai.state import AgentState
@@ -30,11 +39,6 @@ try:
     import pywhatkit
 except Exception:
     pywhatkit = None
-
-try:
-    import ollama
-except Exception:
-    ollama = None
 
 try:
     import pyautogui
@@ -54,9 +58,17 @@ class AfnanAgent:
         state: AgentState | None = None,
         *,
         track_state: bool = True,
+        llm_provider: LLMProvider | None = None,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
+        # The agent talks to a model only through the LLMProvider
+        # interface.  By default that is the local Ollama provider
+        # (llama3), exactly as before; pass any other provider
+        # (local or cloud) and no agent code changes.
+        self.llm: LLMProvider = llm_provider or get_default_provider()
+        # Backwards-compatible alias
+        self.llm_provider = self.llm
         # Centralized, serializable task state.  Components may pass
         # their own AgentState, read ``agent.state``, or ignore it —
         # existing behaviour is unchanged when they do.
@@ -169,19 +181,60 @@ What do you want me to do?
             print("Folder Search Error:", e)
             self.speak("Error while opening folder")
 
-    # -- local AI ----------------------------------------------------------
-    def ask_local_ai(self, prompt: str) -> str:
+    # -- AI (through the LLMProvider interface only) -----------------------
+    def ask_ai(self, prompt: str) -> str:
+        """Ask the configured LLM provider and return its reply text.
+
+        The agent never calls a concrete model client directly, so
+        swapping Ollama for a future local or cloud provider needs
+        no change here.  User-facing failure messages are preserved:
+        with the default Ollama provider they are the exact strings
+        Afnan has always spoken.
+        """
+        provider = self.llm
         try:
-            if ollama is None:
-                return "Sorry boss, AI is not available. Ollama is not installed."
-            response = ollama.chat(
-                model="llama3",
-                messages=[{"role": "user", "content": prompt}],
+            reply = provider.generate(prompt)
+        except LLMUnavailableError as e:
+            self._record_llm_failure(provider, str(e))
+            return (
+                f"Sorry boss, AI is not available. "
+                f"{provider.display_name} is not installed."
             )
-            return response["message"]["content"]
-        except Exception as e:
-            print("Ollama Error:", e)
-            return "Sorry boss, AI is not responding. Make sure Ollama is running."
+        except (LLMConnectionError, LLMInvalidResponseError) as e:
+            print(f"{provider.display_name} Error:", e)
+            self._record_llm_failure(provider, str(e))
+            return (
+                f"Sorry boss, AI is not responding. "
+                f"Make sure {provider.display_name} is running."
+            )
+        except Exception as e:  # provider broke the interface contract
+            print(f"{provider.display_name} Error:", e)
+            self._record_llm_failure(provider, str(e))
+            return (
+                f"Sorry boss, AI is not responding. "
+                f"Make sure {provider.display_name} is running."
+            )
+
+        if self.state is not None and self.track_state:
+            self.state.add_tool_result(
+                provider.name, success=True, output=reply
+            )
+        return reply
+
+    def _record_llm_failure(self, provider: LLMProvider, error: str) -> None:
+        if self.state is not None and self.track_state:
+            self.state.add_tool_result(
+                provider.name, success=False, error=error
+            )
+
+    def ask_local_ai(self, prompt: str) -> str:
+        """Backwards-compatible name for :meth:`ask_ai`.
+
+        Kept so existing callers (``main.ask_local_ai``, scripts and
+        tests) keep working unchanged; with the default provider the
+        model is still the local Ollama llama3.
+        """
+        return self.ask_ai(prompt)
 
     # -- listening -----------------------------------------------------------
     def listen_command(self, timeout: int = 5, phrase_time: int = 6) -> str:
@@ -345,5 +398,6 @@ What do you want me to do?
 def create_agent(
     adapter: PlatformAdapter | None = None,
     state: AgentState | None = None,
+    llm_provider: LLMProvider | None = None,
 ) -> AfnanAgent:
-    return AfnanAgent(adapter=adapter, state=state)
+    return AfnanAgent(adapter=adapter, state=state, llm_provider=llm_provider)
