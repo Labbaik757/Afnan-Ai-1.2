@@ -118,6 +118,30 @@ def main() -> int:
     else:
         print("OK: verifier stays browser-agnostic (browser details live in afnan_ai/browser)")
 
+    # ---- Security layer: gate wired + platform/driver agnostic -----------
+    controller_source = (
+        ROOT / "afnan_ai" / "browser" / "controller.py"
+    ).read_text(encoding="utf-8")
+    if "approval_gate.check" not in controller_source:
+        failures.append("controller does not consult the approval gate")
+        print("FAIL: controller.py never calls approval_gate.check — sensitive actions are ungated")
+    else:
+        print("OK: controller consults the approval gate before sensitive actions")
+
+    security_sources = {
+        "security.py": (ROOT / "afnan_ai" / "browser" / "security.py").read_text(encoding="utf-8"),
+        "redaction.py": (ROOT / "afnan_ai" / "redaction.py").read_text(encoding="utf-8"),
+    }
+    leaked = [
+        name for name, src in security_sources.items()
+        if "playwright" in src or "sys.platform" in src or "startfile" in src
+    ]
+    if leaked:
+        failures.append(f"security layer is not platform/driver agnostic: {leaked}")
+        print(f"FAIL: {leaked} contain driver/OS-specific code")
+    else:
+        print("OK: security + redaction layers are platform/driver agnostic")
+
     # The central Agent orchestrator must drive tools only through
     # the Executor — it must never reach the ToolRegistry, a tool,
     # or the platform adapter directly.
@@ -221,6 +245,7 @@ def main() -> int:
             "browser_select_option", "browser_press_key",
             "browser_scroll", "browser_observe_page",
             "browser_wait_for", "browser_screenshot",
+            "browser_upload_file",
         }
         if set(browser_tool_names) != expected_browser_tools:
             failures.append(f"browser tools mismatch: {browser_tool_names}")

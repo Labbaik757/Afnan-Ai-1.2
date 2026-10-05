@@ -45,6 +45,7 @@ EXPECTED_TOOLS = [
     "browser_select_tab",
     "browser_shutdown",
     "browser_type",
+    "browser_upload_file",
     "browser_wait_for",
 ]
 
