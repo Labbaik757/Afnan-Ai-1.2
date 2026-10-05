@@ -138,6 +138,37 @@ class BrowserBackend(ABC):
     def scroll_to_element(self, handle: Any, element: Any) -> None:
         self._unsupported("scrolling to an element")
 
+    # -- page observation --------------------------------------------------
+    def page_text(self, handle: Any) -> str:
+        """Return the page's visible text."""
+        self._unsupported("reading page text")
+
+    def interactive_elements(
+        self, handle: Any, limit: int
+    ) -> list[Any]:
+        """Return handles of the page's interactive elements."""
+        self._unsupported("listing interactive elements")
+
+    def list_pages(self) -> list[Any]:
+        """All page handles the driver knows, including popups the
+        controller did not create.  Default: none tracked."""
+        return []
+
+    def wait_for(
+        self, handle: Any, spec: dict[str, Any], timeout_ms: int
+    ) -> None:
+        """Block until a condition holds (element/text/URL/title).
+
+        Must be condition-based (driver events/polling), never a
+        fixed sleep.  Raises BrowserException(TIMEOUT) when the
+        condition does not hold within ``timeout_ms``.
+        """
+        self._unsupported("waiting for page conditions")
+
+    def screenshot(self, handle: Any) -> bytes:
+        """Capture the page as PNG bytes."""
+        self._unsupported("screenshots")
+
 
 class PlaywrightBackend(BrowserBackend):
     """Real browser control via Playwright (sync API).
@@ -404,6 +435,84 @@ class PlaywrightBackend(BrowserBackend):
             element.scroll_into_view_if_needed()
         except Exception as e:
             raise self._driver_error(e, "scroll to element") from e
+
+    # -- page observation --------------------------------------------------
+    def page_text(self, handle: Any) -> str:
+        try:
+            return handle.inner_text("body", timeout=3000) or ""
+        except Exception as e:
+            raise self._driver_error(e, "read page text") from e
+
+    def interactive_elements(
+        self, handle: Any, limit: int
+    ) -> list[Any]:
+        selector = (
+            "a, button, input, select, textarea, "
+            "[role='button'], [role='link'], [role='textbox'], "
+            "[contenteditable='true']"
+        )
+        try:
+            return list(handle.query_selector_all(selector))[:limit]
+        except Exception as e:
+            raise self._driver_error(e, "list interactive elements") from e
+
+    def list_pages(self) -> list[Any]:
+        if self._context is None:
+            return []
+        try:
+            return list(self._context.pages)
+        except Exception:
+            return []
+
+    def wait_for(
+        self, handle: Any, spec: dict[str, Any], timeout_ms: int
+    ) -> None:
+        kind = spec.get("kind")
+        try:
+            if kind in ("element_present", "element_hidden"):
+                candidates = self._locators(handle, spec.get("locator") or {})
+                if not candidates:
+                    raise BrowserException(
+                        "No locator strategy to wait for",
+                        code=BrowserErrorCode.INVALID_LOCATOR,
+                    )
+                chosen = candidates[0]
+                for candidate in candidates:
+                    if candidate.count():
+                        chosen = candidate
+                        break
+                state = "attached" if kind == "element_present" else "hidden"
+                chosen.first.wait_for(state=state, timeout=timeout_ms)
+            elif kind == "text_present":
+                handle.get_by_text(str(spec["text"])).first.wait_for(
+                    state="attached", timeout=timeout_ms
+                )
+            elif kind == "url_contains":
+                value = str(spec["value"])
+                handle.wait_for_url(
+                    lambda url: value in (url or ""), timeout=timeout_ms
+                )
+            elif kind == "title_contains":
+                handle.wait_for_function(
+                    "v => document.title.includes(v)",
+                    arg=str(spec["value"]),
+                    timeout=timeout_ms,
+                )
+            else:
+                raise BrowserException(
+                    f"Unknown wait condition {kind!r}",
+                    code=BrowserErrorCode.INVALID_LOCATOR,
+                )
+        except BrowserException:
+            raise
+        except Exception as e:
+            raise self._driver_error(e, f"wait for {kind}") from e
+
+    def screenshot(self, handle: Any) -> bytes:
+        try:
+            return handle.screenshot()
+        except Exception as e:
+            raise self._driver_error(e, "take a screenshot") from e
 
     @staticmethod
     def _driver_error(e: Exception, context: str) -> BrowserException:

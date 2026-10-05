@@ -437,6 +437,7 @@ class Executor:
                 output=tool_result.output,
                 metadata={"step_id": step.step_id, "plan_id": plan_id},
             )
+            self._record_observation(state, step, tool_result.output)
             state.complete_step(step.step_id, result=tool_result.output)
             return result
 
@@ -446,6 +447,36 @@ class Executor:
             tool=step.tool_name,
         )
         return self._record_failure(result, state, error)
+
+    @staticmethod
+    def _record_observation(
+        state: AgentState, step: PlanStep, output: Any
+    ) -> None:
+        """Record a tool's structured observation in AgentState.
+
+        Generic convention, not browser-specific: any tool whose
+        output is a dict containing an ``observation`` dict gets
+        that observation stored via ``state.add_observation`` (in
+        addition to its tool result), so observations — page
+        states, screenshots, sensor readings — share one place.
+        """
+        if not isinstance(output, dict):
+            return
+        obs = output.get("observation")
+        if not isinstance(obs, dict):
+            return
+        state.add_observation(
+            str(
+                obs.get("summary")
+                or f"Observation from {step.tool_name}"
+            ),
+            source=f"tool:{step.tool_name}",
+            metadata={
+                "step_id": step.step_id,
+                "tool_name": step.tool_name,
+                "observation": obs,
+            },
+        )
 
     def _preflight_error(
         self, step: PlanStep, arguments: dict[str, Any]

@@ -508,6 +508,125 @@ class BrowserScrollTool(_BrowserTool):
         )
 
 
+class BrowserObservePageTool(_BrowserTool):
+    """Structured snapshot of what the page currently shows."""
+
+    name = "browser_observe_page"
+    description = (
+        "Read the current page's structured state: URL, title, "
+        "visible text and the interactive elements (each with a "
+        "ref usable by browser_click/browser_type), plus whether "
+        "the page changed since the last observation. Recorded "
+        "in AgentState as an observation."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "tab_id": {"type": "string"},
+            "max_elements": {"type": "integer"},
+            "text_limit": {"type": "integer"},
+        },
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        return self._call(
+            self.controller.observe,
+            tab_id=arguments.get("tab_id"),
+            max_elements=arguments.get("max_elements", 25),
+            text_limit=arguments.get("text_limit", 2000),
+        )
+
+
+class BrowserWaitForTool(_BrowserTool):
+    """Condition-based waiting (no fixed sleeps)."""
+
+    name = "browser_wait_for"
+    description = (
+        "Wait until the page reaches a state: an element appears "
+        "(condition=element_present) or disappears (element_hidden), "
+        "text is present (text_present), or the URL/title contains "
+        "a value (url_contains/title_contains). Locator fields "
+        "(selector/test_id/label/placeholder/role/name) locate the "
+        "element; 'text' is used by text_present; 'value' by the "
+        "URL/title conditions. Times out with a structured error."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "condition": {
+                "type": "string",
+                "enum": [
+                    "element_present",
+                    "element_hidden",
+                    "text_present",
+                    "url_contains",
+                    "title_contains",
+                ],
+            },
+            "selector": {"type": "string"},
+            "test_id": {"type": "string"},
+            "label": {"type": "string"},
+            "placeholder": {"type": "string"},
+            "role": {"type": "string"},
+            "name": {"type": "string"},
+            "text": {"type": "string"},
+            "value": {"type": "string"},
+            "tab_id": {"type": "string"},
+            "timeout_ms": {"type": "integer"},
+        },
+        "required": ["condition"],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        locator = {
+            key: arguments[key]
+            for key in (
+                "selector", "test_id", "label", "placeholder",
+                "role", "name", "text",
+            )
+            if arguments.get(key)
+        }
+        return self._call(
+            self.controller.wait_for,
+            arguments["condition"],
+            locator=locator or None,
+            text=arguments.get("text"),
+            value=arguments.get("value"),
+            tab_id=arguments.get("tab_id"),
+            timeout_ms=arguments.get("timeout_ms"),
+        )
+
+
+class BrowserScreenshotTool(_BrowserTool):
+    """Visual snapshot of the page, saved to disk."""
+
+    name = "browser_screenshot"
+    description = (
+        "Capture a PNG screenshot of the current page. Returns "
+        "the saved file path plus page URL/title as a structured "
+        "observation recorded in AgentState."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "tab_id": {"type": "string"},
+            "output_dir": {"type": "string"},
+            "filename": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        return self._call(
+            self.controller.screenshot,
+            tab_id=arguments.get("tab_id"),
+            output_dir=arguments.get("output_dir"),
+            filename=arguments.get("filename"),
+        )
+
+
 def create_browser_tools(
     controller: BrowserController,
 ) -> list[Tool]:
@@ -533,6 +652,9 @@ def create_browser_tools(
         BrowserSelectOptionTool(controller),
         BrowserPressKeyTool(controller),
         BrowserScrollTool(controller),
+        BrowserObservePageTool(controller),
+        BrowserWaitForTool(controller),
+        BrowserScreenshotTool(controller),
     ]
 
 

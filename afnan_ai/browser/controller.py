@@ -20,7 +20,11 @@ and never silent successes.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from afnan_ai.browser.backend import (
@@ -83,6 +87,8 @@ class BrowserController:
         self._elements: dict[str, dict[str, Any]] = {}
         self._element_counter = 0
         self._generations: dict[str, int] = {}
+        # last observation fingerprint per tab (page-change detection)
+        self._observations: dict[str, str] = {}
 
     # -- introspection ----------------------------------------------------
     @property
@@ -205,10 +211,33 @@ class BrowserController:
         return self._tab_info(tab).to_dict()
 
     def list_tabs(self) -> list[dict[str, Any]]:
-        """Snapshot of all open tabs (empty when none are open)."""
+        """Snapshot of all open tabs (empty when none are open;
+        popup pages appear here after adoption)."""
+        self.sync_tabs()
         for tab in self._tabs.values():
             self._refresh(tab, quiet=True)
         return [self._tab_info(t).to_dict() for t in self._tabs.values()]
+
+    def sync_tabs(self) -> list[dict[str, Any]]:
+        """Adopt pages the driver knows about but the controller
+        did not create (popups / new-window links) as regular tabs,
+        so they can be listed, selected and observed like any tab."""
+        adopted = []
+        try:
+            handles = self._backend.list_pages()
+        except Exception:
+            handles = []
+        for handle in handles or []:
+            if any(handle is tab.handle for tab in self._tabs.values()):
+                continue
+            self._counter += 1
+            tab = _Tab(tab_id=f"tab_{self._counter}", handle=handle)
+            self._tabs[tab.tab_id] = tab
+            self._generations[tab.tab_id] = 0
+            self._refresh(tab, quiet=True)
+            adopted.append(self._tab_info(tab).to_dict())
+            logger.info("browser adopted popup tab: %s", tab.tab_id)
+        return adopted
 
     def select_tab(self, tab_id: str) -> dict[str, Any]:
         """Make *tab_id* the active tab."""
@@ -515,6 +544,223 @@ class BrowserController:
             "dx": int(dx),
             "dy": int(dy),
             "page": self.current_page(tab.tab_id),
+        }
+
+    # -- page observation ---------------------------------------------------
+    def observe(
+        self,
+        tab_id: str | None = None,
+        *,
+        max_elements: int = 25,
+        text_limit: int = 2000,
+    ) -> dict[str, Any]:
+        """Read the current page's structured state: URL, title,
+        visible text and the interactive elements (each with a
+        reusable ref for later click/type actions), plus whether
+        the page changed since the last observation of this tab.
+
+        A failed observation raises — it is never reported as a
+        successful but empty observation.
+        """
+        self.sync_tabs()
+        tab = self._resolve_tab(tab_id)
+        page = self.current_page(tab.tab_id)
+        try:
+            text = self._backend.page_text(tab.handle)
+        except BrowserException:
+            raise
+        except Exception as e:
+            raise BrowserException(
+                f"Could not read page text: {e}",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"tab_id": tab.tab_id},
+            ) from e
+        try:
+            handles = self._backend.interactive_elements(
+                tab.handle, max(1, min(int(max_elements), 100))
+            )
+        except BrowserException:
+            raise
+        except Exception as e:
+            raise BrowserException(
+                f"Could not list interactive elements: {e}",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"tab_id": tab.tab_id},
+            ) from e
+        elements = [self._register_element(tab, h) for h in handles]
+
+        text = text or ""
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                [
+                    page["url"],
+                    page["title"],
+                    text,
+                    [
+                        (
+                            el.tag,
+                            el.attributes.get("id"),
+                            el.attributes.get("name"),
+                            el.text,
+                        )
+                        for el in elements
+                    ],
+                ],
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        changed = self._observations.get(tab.tab_id) != fingerprint
+        self._observations[tab.tab_id] = fingerprint
+
+        logger.info(
+            "browser observed tab %s: %d elements, changed=%s",
+            tab.tab_id,
+            len(elements),
+            changed,
+        )
+        return {
+            "kind": "observation",
+            "tab_id": tab.tab_id,
+            "url": page["url"],
+            "title": page["title"],
+            "text": text[:text_limit],
+            "text_truncated": len(text) > text_limit,
+            "elements": [el.to_dict() for el in elements],
+            "element_count": len(elements),
+            "page_changed": changed,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "observation": {
+                "type": "page_observation",
+                "summary": (
+                    f"Observed page {page['title']!r} at "
+                    f"{page['url']}: {len(elements)} interactive "
+                    f"elements, page changed: {changed}"
+                ),
+                "url": page["url"],
+                "title": page["title"],
+                "page_changed": changed,
+            },
+        }
+
+    def wait_for(
+        self,
+        condition: str,
+        *,
+        locator: dict[str, Any] | None = None,
+        text: str | None = None,
+        value: str | None = None,
+        tab_id: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Wait — condition-based, never a fixed sleep — until the
+        page reaches a state: an element appears/disappears, text
+        is present, or the URL/title contains a value.  Times out
+        with a structured ``timeout`` error."""
+        kind = str(condition or "").strip()
+        if kind in ("element_present", "element_hidden"):
+            spec = {
+                "kind": kind,
+                "locator": self._validate_locator(locator),
+            }
+        elif kind == "text_present":
+            if not text and isinstance(locator, dict):
+                text = locator.get("text")
+            if not text:
+                raise BrowserException(
+                    "text_present waits need a 'text' value",
+                    code=BrowserErrorCode.INVALID_LOCATOR,
+                )
+            spec = {"kind": kind, "text": str(text)}
+        elif kind in ("url_contains", "title_contains"):
+            if not value:
+                raise BrowserException(
+                    f"{kind} waits need a 'value' to look for",
+                    code=BrowserErrorCode.INVALID_LOCATOR,
+                )
+            spec = {"kind": kind, "value": str(value)}
+        else:
+            raise BrowserException(
+                f"Unknown wait condition {condition!r}; use "
+                "element_present, element_hidden, text_present, "
+                "url_contains or title_contains",
+                code=BrowserErrorCode.INVALID_LOCATOR,
+            )
+        tab = self._resolve_tab(tab_id)
+        timeout = self._timeout(timeout_ms)
+        try:
+            self._backend.wait_for(tab.handle, spec, timeout)
+        except BrowserException:
+            raise
+        except Exception as e:
+            raise BrowserException(
+                f"Wait for {kind} failed: {e}",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"condition": kind, "tab_id": tab.tab_id},
+            ) from e
+        return {
+            "satisfied": True,
+            "condition": kind,
+            "page": self.current_page(tab.tab_id),
+        }
+
+    def screenshot(
+        self,
+        tab_id: str | None = None,
+        *,
+        output_dir: str | None = None,
+        filename: str | None = None,
+    ) -> dict[str, Any]:
+        """Capture a PNG screenshot of the current page to disk
+        and return a structured observation of it.  An empty or
+        failed capture is an error, never a fake success."""
+        tab = self._resolve_tab(tab_id)
+        try:
+            data = self._backend.screenshot(tab.handle)
+        except BrowserException:
+            raise
+        except Exception as e:
+            raise BrowserException(
+                f"Screenshot failed: {e}",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"tab_id": tab.tab_id},
+            ) from e
+        if not data:
+            raise BrowserException(
+                "Screenshot failed: the browser returned no image data",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"tab_id": tab.tab_id},
+            )
+        directory = Path(output_dir) if output_dir else Path("screenshots")
+        directory.mkdir(parents=True, exist_ok=True)
+        if filename:
+            name = Path(filename).name
+            if not name.lower().endswith(".png"):
+                name += ".png"
+        else:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            name = f"screenshot_{stamp}.png"
+        path = directory / name
+        path.write_bytes(data)
+        page = self.current_page(tab.tab_id)
+        logger.info("browser screenshot saved: %s", path)
+        return {
+            "kind": "observation",
+            "path": str(path),
+            "size_bytes": len(data),
+            "tab_id": tab.tab_id,
+            "url": page["url"],
+            "title": page["title"],
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "observation": {
+                "type": "screenshot",
+                "summary": (
+                    f"Screenshot of {page['title']!r} at "
+                    f"{page['url']} saved to {path} "
+                    f"({len(data)} bytes)"
+                ),
+                "path": str(path),
+                "url": page["url"],
+            },
         }
 
     # -- element internals ------------------------------------------------
