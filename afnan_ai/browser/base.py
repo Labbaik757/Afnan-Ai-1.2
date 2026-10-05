@@ -58,6 +58,7 @@ class BrowserErrorCode(str, Enum):
     SESSION_EXPIRED = "session_expired"
     PROFILE_ERROR = "profile_error"
     UNSUPPORTED_OPERATION = "unsupported_operation"
+    EMERGENCY_STOP = "emergency_stop"
 
 
 @dataclass

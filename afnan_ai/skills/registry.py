@@ -137,6 +137,26 @@ class SkillRegistry:
                     code="validation_failed",
                     details=validation.to_dict(),
                 )
+        # Security review: risk classification, per-step
+        # capability requirements, injection scan.  The
+        # review is recorded in the changelog (audit trail)
+        # and required capabilities are registered with the
+        # central SecurityCenter when one is wired.
+        review = self.security_review(skill)
+        if not review["ok"]:
+            raise SkillError(
+                "skill failed security review: "
+                + "; ".join(review["issues"][:3]),
+                code="security_review_failed",
+                details=review,
+            )
+        self._apply_review_grants(skill, review)
+        skill.changelog.append(
+            "security_review: "
+            + ", ".join(review["issues"])
+            if review["issues"]
+            else "security_review: clean"
+        )
         versions = self._versions.setdefault(skill.skill_id, {})
         if skill.version in versions:
             raise SkillError(
@@ -205,6 +225,90 @@ class SkillRegistry:
         skill = self.get(skill_id)
         skill.status = SkillStatus.ACTIVE
         self._audit("enabled", skill)
+
+    # -- security review --------------------------------------------
+    def security_review(
+        self, skill: "Skill"
+    ) -> dict[str, Any]:
+        """Security review before a skill goes live.
+
+        Returns a report with: ok, issues, risk level, and
+        the capability ids each step requires.  External
+        content is treated as data — instruction-like text
+        anywhere in the skill fails the review."""
+        issues: list[str] = []
+        scan = _scan_injection()
+        required_capabilities: set[str] = set()
+        capability_map: dict[str, str] = {}
+        try:
+            from afnan_ai.security.policy import (
+                TOOL_CAPABILITY_MAP,
+            )
+
+            capability_map = dict(TOOL_CAPABILITY_MAP)
+        except Exception:
+            capability_map = {}
+        for step in skill.steps or []:
+            tool = str(getattr(step, "tool", "") or "")
+            if not tool:
+                issues.append(
+                    "step without tool: "
+                    + str(getattr(step, "step_id", "?"))
+                )
+                continue
+            cap = capability_map.get(tool)
+            if cap:
+                required_capabilities.add(cap)
+            for text in (
+                str(getattr(step, "description", "") or ""),
+                *(
+                    str(v)
+                    for v in (
+                        getattr(step, "arguments", {}) or {}
+                    ).values()
+                ),
+            ):
+                if text and scan(text):
+                    issues.append(
+                        "instruction-like content in step "
+                        + str(
+                            getattr(step, "step_id", "?")
+                        )
+                    )
+                    break
+        return {
+            "ok": not issues,
+            "issues": issues,
+            "risk": str(
+                getattr(skill, "risk", "read_only")
+            ),
+            "required_capabilities": sorted(
+                required_capabilities
+            ),
+        }
+
+    def _apply_review_grants(
+        self, skill: "Skill", review: dict[str, Any]
+    ) -> None:
+        """Register the skill's required capabilities with
+        the central SecurityCenter (when the tool registry
+        has one wired).  The skill executor still goes
+        through normal per-call authorization."""
+        center = getattr(
+            self._tool_registry, "security_center", None
+        )
+        if center is None:
+            return
+        actor = getattr(center, "agent_actor", "agent:main")
+        for cap_id in review.get("required_capabilities", []):
+            try:
+                center.capabilities.require(cap_id)
+            except KeyError:
+                continue
+            try:
+                center.permissions.grant(actor, cap_id)
+            except Exception:
+                pass
 
     # -- lookup -----------------------------------------------------------
     def get(

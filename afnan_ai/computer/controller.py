@@ -57,6 +57,37 @@ class ComputerController:
         self._elements: dict[str, ComputerElement] = {}
         self._observation: ComputerObservation | None = None
         self._known_window_ids: set[str] = set()
+        # Central security: the global emergency stop
+        # refuses new actions until an authorized reset.
+        self._security_center: Any = None
+
+    def set_security_center(self, center: Any) -> None:
+        if center is None:
+            return
+        self._security_center = center
+        try:
+            center.emergency.register(self._emergency_halt)
+        except Exception:
+            pass
+
+    def _emergency_halt(self) -> None:
+        # The computer backend holds no cancellable remote
+        # session; halting means refusing all further
+        # actions (the check below) until reset.
+        self._observation = None
+        self._elements.clear()
+
+    def _check_emergency(self) -> None:
+        center = self._security_center
+        if (
+            center is not None
+            and center.emergency.is_tripped()
+        ):
+            raise ComputerError(
+                "emergency_stop",
+                "refused: the global emergency stop is "
+                "tripped; an authorized reset is required",
+            )
 
     # ---------------------------------------------------------
     # Observation
@@ -465,6 +496,7 @@ class ComputerController:
         expect_text: str | None = None,
         expect_window: str | None = None,
     ) -> dict[str, Any]:
+        self._check_emergency()
         action = (action or "").lower()
         before_fingerprint = (
             self._observation.fingerprint

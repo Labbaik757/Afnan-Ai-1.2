@@ -45,6 +45,7 @@ class ConnectorErrorCode(str, Enum):
     MALFORMED_RESPONSE = "malformed_response"
     SERVICE_UNAVAILABLE = "service_unavailable"
     EXECUTION_FAILED = "execution_failed"
+    EMERGENCY_STOP = "emergency_stop"
 
 
 #: Error codes that a retry *may* resolve (with backoff), as

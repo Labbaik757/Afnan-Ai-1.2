@@ -113,7 +113,50 @@ class AfnanBrowserRuntime:
         self._browser_name = "chromium"
         self._headless = True
         self._permission_checker: Callable | None = None
+        # Central security: the global emergency stop closes
+        # every browser page and refuses new actions until an
+        # authorized reset.
+        self._security_center: Any = None
+        self._in_emergency_halt = False
         self._load_profiles()
+
+    def set_security_center(self, center: Any) -> None:
+        if center is None:
+            return
+        self._security_center = center
+        try:
+            center.emergency.register(self._emergency_halt)
+        except Exception:
+            pass
+
+    def _emergency_halt(self) -> None:
+        self._in_emergency_halt = True
+        try:
+            for handle in list(self._tabs.keys()):
+                try:
+                    self.close_page(handle)
+                except Exception:
+                    pass
+            try:
+                self.stop()
+            except Exception:
+                pass
+        finally:
+            self._in_emergency_halt = False
+
+    def _check_emergency(self) -> None:
+        if self._in_emergency_halt:
+            return
+        center = self._security_center
+        if (
+            center is not None
+            and center.emergency.is_tripped()
+        ):
+            raise BrowserException(
+                "refused: the global emergency stop is "
+                "tripped; an authorized reset is required",
+                code=BrowserErrorCode.EMERGENCY_STOP,
+            )
 
     # -- identity -----------------------------------------------------
 
@@ -321,6 +364,7 @@ class AfnanBrowserRuntime:
         exactly as before the runtime existed.
         """
         try:
+            self._check_emergency()
             return fn(*args, **kwargs)
         except BrowserException:
             raise

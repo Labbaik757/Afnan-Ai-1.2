@@ -14,6 +14,7 @@ class ComputerError(Exception):
         "element_not_found", "stale_element", "window_mismatch",
         "low_confidence", "approval_required", "approval_denied",
         "action_failed", "timeout", "invalid_arguments",
+        "emergency_stop",
         "application_crashed", "file_error",
     })
 
