@@ -858,7 +858,9 @@ Tool architecture (35 browser tools total):
   solves the check in the browser themselves, and the blocked
   action resumes automatically once the page clears; without
   one, the task pauses for the user, and recovery advice says
-  exactly that.
+  exactly that. Interactive `main` registers a console prompt
+  handler by default: the user solves the check in the browser
+  window, presses Enter, and the task resumes.
 - **Download manager** (`browser_downloads`) — downloads are
   tracked centrally (state, filename, type, destination,
   size); finished files are verified for existence and basic
