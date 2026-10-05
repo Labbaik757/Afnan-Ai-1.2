@@ -1158,6 +1158,81 @@ and registering it; core agent code never changes.
   `tests/test_connectors.py` (44 tests, mock email/calendar/
   flaky connectors — no external services needed).
 
+## Long-Context & Trajectory Reasoning
+
+`afnan_ai/context/` gives long-running tasks a unified,
+budgeted working memory without turning into a second
+orchestration layer:
+
+    Goal
+      ↓ ContextManager
+      ↓ Observe + Relevant History
+      ↓ Decide
+      ↓ Validate
+      ↓ Execute
+      ↓ Verify
+      ↓ Trajectory Update
+      ↓ Context Compression
+      ↓ Memory / Goal Update
+      ↓ Next Decision / Recovery / Completion
+
+- **ContextManager** (`manager.py`) holds the goal, active
+  sub-goal, relevant memory, recent observations, previous
+  actions, tool results, verification results,
+  failures/recovery attempts (each with a "try instead"
+  hint), approvals, decisions, facts and constraints in one
+  place.  It never plans or executes — it records what the
+  AgentLoop did and answers "what is relevant for this
+  decision?".
+- **No unbounded growth** (`models.py`): a configurable
+  `ContextBudget` (context chars, recent-detail window,
+  compression threshold, item caps, retrieval limit,
+  trajectory/retention caps).  Old detail compresses into
+  one rolling evidence-based summary; facts, constraints,
+  decisions and failures are always preserved.
+- **TrajectoryStore** (`trajectory.py`): every task's
+  trajectory (observation/decision/action/result/
+  verification/recovery/approval/checkpoint, each with a
+  trust zone) is persisted per task id under
+  `<memory_dir>/trajectories.json` and recovered after
+  restarts; retention keeps only recent finished tasks.
+- **Intelligent retrieval** (`retrieval.py`): each cycle
+  pulls only relevant history — deterministic scoring over
+  tag overlap, recency, importance and past usefulness.
+  Irrelevant old history never reaches the Planner.
+- **Decision continuity**: the Planner sees what is
+  completed (never repeat), pending, failed (with what to
+  try instead) and which sub-goal is active.  Complex tasks
+  decompose into dynamic sub-goals; a failed step's
+  sub-goal retries on the next plan instead of restarting
+  the whole task, and recovery briefs carry previous
+  attempts, failure reasons and kept partial progress.
+- **Model context safety** (`safety.py`): every prompt
+  section is trust-zone labeled — trusted system/user
+  instructions, the agent's own state, tool observations,
+  and quarantined untrusted external content (explicit
+  delimiters, trusted sections first, truncation cuts the
+  untrusted tail first).  Prompt-injection findings are
+  reported, never obeyed.
+- **Evidence-based summaries** (`summarizer.py`): completed
+  work, remaining work, discoveries, constraints, failures,
+  decisions, facts and next objective — built only from
+  recorded entries, never a model call.  `add_fact` accepts
+  `user`/`verified_result` sources only, so the model
+  cannot invent facts into context.
+- **AgentLoop integration**: per-run `ContextManager`
+  (factory-injected — the loop never imports the package),
+  trace mirroring into the store, sub-goal sync from plans,
+  recovery briefs in replan notes, zoned relevant-history
+  section in the decision context, and an end-of-run
+  summary + resumable snapshot in task metadata
+  (`context_summary`, `context_snapshot`).  Disable the
+  per-run manager by omitting the factory; inject a budget
+  with `AfnanAgent(context_budget=...)`; read trajectories
+  with `agent.get_trajectory_store()` (main delegate
+  included).  Tests: `tests/test_context_reasoning.py`
+  (29 tests).
+
 ## Autonomous browser workflow
 
 `run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,
