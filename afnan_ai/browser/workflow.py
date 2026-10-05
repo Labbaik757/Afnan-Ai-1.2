@@ -214,6 +214,13 @@ class BrowserWorkflow:
                 "adapter": runtime.name,
                 "profile_id": runtime.session.profile_id,
                 "status": runtime.session.status,
+                # Structured runtime events (browser_started,
+                # tab_created, navigation_completed,
+                # browser_crashed, ...) as state evidence —
+                # types only, never page data or credentials.
+                "recent_events": [
+                    event["type"] for event in runtime.events(8)
+                ],
             },
         }
         tab_lines: list[str] = []

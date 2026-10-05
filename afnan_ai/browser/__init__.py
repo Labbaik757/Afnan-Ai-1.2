@@ -5,13 +5,15 @@ page state, history, shutdown) that works the same on Windows,
 macOS and Linux.  The layering is::
 
     BrowserController → AfnanBrowserRuntime
+        → BrowserEngineAdapter → ChromiumAdapter → Chromium
         → BrowserEngineAdapter → PlaywrightAdapter → Chromium
+          (fallback / development)
 
 The controller owns sessions/tabs/validation, the runtime owns
-browser lifecycle and recoverable state, and only the adapter
+browser lifecycle and recoverable state, and only an adapter
 talks to a concrete engine — so the engine can be swapped (a
-future Afnan Chromium adapter) without touching controller,
-tools or the core agent.
+future customized Afnan Chromium build included) without
+touching controller, tools or the core agent.
 
 Importing this package never imports a browser driver or launches
 anything.
@@ -32,6 +34,7 @@ from afnan_ai.browser.base import (
     TabInfo,
 )
 from afnan_ai.browser.controller import BrowserController
+from afnan_ai.browser.chromium_adapter import ChromiumAdapter
 from afnan_ai.browser.engine import BrowserEngineAdapter
 from afnan_ai.browser.models import (
     BrowserAction,
@@ -84,6 +87,7 @@ __all__ = [
     "BrowserTaskResult",
     "BrowserWindow",
     "BrowserWorkflow",
+    "ChromiumAdapter",
     "ElementInfo",
     "PageState",
     "PlaywrightAdapter",

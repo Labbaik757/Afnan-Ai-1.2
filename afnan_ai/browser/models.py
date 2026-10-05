@@ -71,6 +71,8 @@ class BrowserTab:
     profile_id: str = "default"
     purpose: str = ""
     active: bool = False
+    window_id: str = "main"
+    task_id: str = ""
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
 
@@ -82,6 +84,8 @@ class BrowserTab:
             "profile_id": self.profile_id,
             "purpose": self.purpose,
             "active": self.active,
+            "window_id": self.window_id,
+            "task_id": self.task_id,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -95,6 +99,8 @@ class BrowserTab:
             profile_id=str(data.get("profile_id") or "default"),
             purpose=str(data.get("purpose") or ""),
             active=bool(data.get("active", False)),
+            window_id=str(data.get("window_id") or "main"),
+            task_id=str(data.get("task_id") or ""),
             created_at=str(data.get("created_at") or _now()),
             updated_at=str(data.get("updated_at") or _now()),
         )

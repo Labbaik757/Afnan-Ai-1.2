@@ -4,8 +4,9 @@ The runtime sits between the BrowserController and a concrete
 :class:`BrowserEngineAdapter`::
 
     Afnan Agent → Browser Tools → BrowserController
-        → AfnanBrowserRuntime → BrowserEngineAdapter
-        → PlaywrightAdapter → Chromium
+        → AfnanBrowserRuntime → ChromiumAdapter → Chromium
+        → AfnanBrowserRuntime → PlaywrightAdapter → Chromium
+          (fallback / development adapter)
 
 The runtime owns: browser lifecycle (start/stop/restart),
 engine-level session state (which tabs exist, where they are),
@@ -43,11 +44,21 @@ logger = get_logger(__name__)
 
 #: Event types the runtime emits (see ``subscribe``/``events``).
 EVENT_TYPES = (
-    "browser_started", "browser_stopped", "tab_created",
+    "browser_started", "browser_ready", "browser_stopped",
+    "browser_crashed", "tab_created",
     "tab_closed", "tab_selected", "navigation_started",
     "navigation_completed", "page_changed", "popup_detected",
     "download_started", "download_completed", "browser_error",
     "browser_recovered",
+)
+
+#: Permission levels the runtime understands.  Actual human
+#: approval for sensitive actions is enforced by the
+#: controller's ApprovalGate; the runtime-level checker (see
+#: ``set_permission_checker``) is the extension point for
+#: engine/runtime policy on top of that.
+PERMISSION_LEVELS = (
+    "normal", "sensitive", "destructive", "approval_required",
 )
 
 _SENSITIVE_PREF_PARTS = (
@@ -79,9 +90,11 @@ class AfnanBrowserRuntime:
         runtime_dir: str | Path | None = None,
     ):
         if adapter is None:
-            from afnan_ai.browser.backend import PlaywrightAdapter
+            from afnan_ai.browser.chromium_adapter import (
+                ChromiumAdapter,
+            )
 
-            adapter = PlaywrightAdapter()
+            adapter = ChromiumAdapter()
         self.adapter = adapter
         self.runtime_dir = (
             Path(runtime_dir).expanduser() if runtime_dir else None
@@ -99,6 +112,7 @@ class AfnanBrowserRuntime:
         self._seen_downloads: dict[str, str] = {}
         self._browser_name = "chromium"
         self._headless = True
+        self._permission_checker: Callable | None = None
         self._load_profiles()
 
     # -- identity -----------------------------------------------------
@@ -183,6 +197,10 @@ class AfnanBrowserRuntime:
             "browser_started", browser=browser,
             adapter=self.adapter.name,
         )
+        self.emit(
+            "browser_ready", browser=browser,
+            adapter=self.adapter.name,
+        )
         return BrowserResult(
             True, "start",
             data={"session": self.session.to_dict()},
@@ -202,6 +220,7 @@ class AfnanBrowserRuntime:
         self.session.adapter_name = self.adapter.name
         self.session.touch()
         self.emit("browser_started", connected=True)
+        self.emit("browser_ready", connected=True)
         return BrowserResult(
             True, "connect",
             data={"session": self.session.to_dict()},
@@ -243,6 +262,10 @@ class AfnanBrowserRuntime:
             self.session.status = "crashed"
             self.session.touch()
             self.save_session()
+            self.emit(
+                "browser_crashed",
+                message="Browser process stopped responding",
+            )
             self.emit(
                 "browser_error", code="browser_crashed",
                 message="Browser process stopped responding",
@@ -309,6 +332,9 @@ class AfnanBrowserRuntime:
                     self.session.status = "crashed"
                     self.session.touch()
                     self.save_session()
+                self.emit(
+                    "browser_crashed", message=str(e),
+                )
                 self.emit(
                     "browser_error", code="browser_crashed",
                     message=str(e),
@@ -525,6 +551,7 @@ class AfnanBrowserRuntime:
         tab = BrowserTab(
             tab_id=f"rt_{self._tab_counter}",
             profile_id=self.session.profile_id,
+            window_id=self.session.window.window_id or "main",
         )
         for other in self._tabs.values():
             other.active = False
@@ -561,6 +588,112 @@ class AfnanBrowserRuntime:
         """Serializable engine-level tab state (safe for
         AgentState/checkpoints — no handles, redacted URLs)."""
         return [t.to_dict() for t in self.session.tabs]
+
+    def tab_record(self, tab_id: str) -> dict[str, Any] | None:
+        """One runtime tab record by id (or None)."""
+        for tab in self.session.tabs:
+            if tab.tab_id == tab_id:
+                return tab.to_dict()
+        return None
+
+    def assign_tab_task(self, tab_id: str, task_id: str) -> bool:
+        """Associate a runtime tab with the agent task using it.
+
+        Tab/task association lives here (and in checkpoints),
+        never in the engine; returns False for unknown tabs.
+        """
+        for tab in self.session.tabs:
+            if tab.tab_id == tab_id:
+                tab.task_id = str(task_id or "")
+                tab.updated_at = datetime.now(
+                    timezone.utc
+                ).isoformat()
+                self._sync_session_tabs()
+                return True
+        return False
+
+    # -- health monitoring ---------------------------------------------
+
+    def health(self) -> dict[str, Any]:
+        """Structured runtime health snapshot.
+
+        Knows whether the engine is alive, the session is
+        valid, an active tab exists and its page responds —
+        without raising; failures surface as data the agent
+        can reason over (``check_health`` performs the crash
+        transition when a structured error is needed).
+        """
+        alive = self._alive_quietly() if self.running else False
+        active = next(
+            (t for t in self.session.tabs if t.active), None
+        )
+        responsive = False
+        if alive and active is not None:
+            handle = next(
+                (
+                    h for h, t in self._tabs.items()
+                    if t.tab_id == active.tab_id
+                ),
+                None,
+            )
+            if handle is not None:
+                try:
+                    self.adapter.page_url(handle)
+                    responsive = True
+                except Exception:
+                    responsive = False
+        return {
+            "alive": alive,
+            "session_status": self.session.status,
+            "session_id": self.session.session_id,
+            "adapter": self.adapter.name,
+            "profile_id": self.session.profile_id,
+            "active_tab": active.to_dict() if active else None,
+            "page_responsive": responsive,
+            "tab_count": len(self.session.tabs),
+        }
+
+    # -- permission extension point --------------------------------------
+
+    def set_permission_checker(
+        self,
+        checker: Callable[[str, str, dict[str, Any]], bool] | None,
+    ) -> None:
+        """Install a runtime-level permission policy hook.
+
+        ``checker(action, level, context) -> bool``.  This is
+        an extension point for runtime/engine policy; human
+        approval for sensitive actions stays with the
+        controller's ApprovalGate, and nothing here loosens
+        it.  Without a checker, ``normal``/``sensitive`` /
+        ``destructive`` levels raise no runtime objection and
+        ``approval_required`` is denied (fail-safe).
+        """
+        self._permission_checker = checker
+
+    def check_permission(
+        self,
+        action: str,
+        level: str = "normal",
+        **context: Any,
+    ) -> bool:
+        """Runtime-level permission check (see PERMISSION_LEVELS)."""
+        if level not in PERMISSION_LEVELS:
+            raise BrowserException(
+                f"Unknown permission level {level!r}",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"action": action, "level": level},
+            )
+        if self._permission_checker is not None:
+            try:
+                return bool(
+                    self._permission_checker(
+                        str(action), level, dict(context)
+                    )
+                )
+            except Exception:
+                return False  # a broken policy must fail safe
+        return level != "approval_required"
 
     # -- profiles (persistent registry) -----------------------------------
 
@@ -727,6 +860,7 @@ class AfnanBrowserRuntime:
             "sessions": True,
             "events": True,
             "crash_recovery": True,
+            "health_monitoring": True,
             "persistent_profiles": False,
             "accessibility": False,
             "screenshots": False,
