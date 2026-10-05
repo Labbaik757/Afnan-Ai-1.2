@@ -254,12 +254,20 @@ class AgentLoop:
         on_event: Callable[[LoopEvent], None] | None = None,
         memory_store: Any = None,
         goal_manager: Any = None,
+        system_context_provider: Callable[[], str | None] | None = None,
     ):
         self.agent = agent
         self.observation_provider = observation_provider
         self.on_event = on_event
         self.memory_store = memory_store
         self.goal_manager = goal_manager
+        # Generic, capability-agnostic hook: whoever builds the
+        # loop may inject a short "what else can I use" section
+        # (e.g. registered external-service connectors) into the
+        # Planner's decision context.  The loop itself knows
+        # nothing about connectors — no connector-specific
+        # orchestration lives here.
+        self.system_context_provider = system_context_provider
         self.events: list[LoopEvent] = []
         self.trajectory: list[dict[str, Any]] = []
         self._run_memories: list[str] = []
@@ -1261,6 +1269,13 @@ class AgentLoop:
                     for g in self._run_goals
                 )
             )
+        if self.system_context_provider is not None:
+            try:
+                extra_section = self.system_context_provider()
+            except Exception:  # a broken provider never breaks planning
+                extra_section = None
+            if extra_section:
+                lines.append(str(extra_section)[:800])
         completed = [s.name for s in state.completed_steps][-10:]
         if completed:
             lines.append(
