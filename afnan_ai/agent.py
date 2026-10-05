@@ -396,6 +396,38 @@ class AfnanAgent:
         )
         if enable_skill_tools:
             self.register_skill_tools()
+        # Multi-agent / subagent architecture: complex goals
+        # divide into specialized, least-privilege subagents.
+        # Each subagent runs the *existing* AgentLoop against
+        # a scoped tool view — no new orchestration layer.
+        # Permissions can never exceed the parent's; results
+        # return as structured handoffs the parent verifies.
+        from afnan_ai.skills.models import SkillRisk
+        from afnan_ai.subagents import (
+            SubAgentManager,
+            SubAgentSecurity,
+        )
+
+        parent_connector_ids: set[str] = set()
+        if self.connector_registry is not None:
+            try:
+                parent_connector_ids = {
+                    c.connector_id
+                    for c in self.connector_registry.list()
+                }
+            except Exception:
+                parent_connector_ids = set()
+        self.subagent_security = SubAgentSecurity(
+            parent_tool_names=set(self.tools.names()),
+            parent_connector_ids=parent_connector_ids,
+            parent_max_risk=SkillRisk.DESTRUCTIVE,
+        )
+        self.subagent_manager = SubAgentManager(
+            tool_registry=self.tools,
+            loop_factory=self._build_subagent_loop,
+            security=self.subagent_security,
+            audit_path=str(memory_base / "subagent_audit.jsonl"),
+        )
         self.orchestrator: OrchestratorAgent = orchestrator or OrchestratorAgent(
             planner=self.planner,
             executor=self.executor,
@@ -786,6 +818,72 @@ class AfnanAgent:
         if self._agent_loop is None:
             self._agent_loop = self._build_agent_loop()
         return self._agent_loop
+
+    # -- multi-agent / subagents ------------------------------------
+    def get_subagent_manager(self):
+        """The SubAgentManager: create and supervise
+        least-privilege subagents for complex goals."""
+        return self.subagent_manager
+
+    def _build_subagent_loop(
+        self, spec, scoped_tools, context_text, checkpointer=None
+    ):
+        """Build a scoped AgentLoop for one subagent.
+
+        Reuses the existing Planner/Executor/Verifier/
+        RecoveryManager/AgentLoop machinery against the
+        subagent's restricted tool view, with its own
+        isolated AgentState.  Subagents share the parent's
+        LLM provider and read-only browser observation, but
+        never the parent's AgentState, credentials, or
+        approval authority.
+        """
+        from afnan_ai.agent_loop import AgentLoop
+        from afnan_ai.executor import Executor
+        from afnan_ai.orchestrator import Agent as OrchestratorAgent
+        from afnan_ai.planner import Planner
+        from afnan_ai.recovery import RecoveryManager
+        from afnan_ai.verifier import Verifier
+
+        planner = Planner(self.llm, scoped_tools)
+        executor = Executor(scoped_tools)
+        verifier = Verifier(
+            observation_provider=self._verifier_observation_provider,
+        )
+        orchestrator = OrchestratorAgent(
+            planner=planner,
+            executor=executor,
+            verifier=verifier,
+            max_iterations=min(
+                10, max(3, spec.limits.max_steps)
+            ),
+            max_recovery_attempts=1,
+            checkpointer=(
+                checkpointer._inner
+                if checkpointer is not None
+                and getattr(checkpointer, "_inner", None)
+                is not None
+                else None
+            ),
+        )
+        # The capturing wrapper still records snapshots for
+        # approval-pause resume; give the orchestrator the
+        # wrapper when there is no inner checkpointer.
+        if (
+            orchestrator.checkpointer is None
+            and checkpointer is not None
+        ):
+            orchestrator.checkpointer = checkpointer
+
+        def _scoped_context():
+            return context_text
+
+        return AgentLoop(
+            orchestrator,
+            observation_provider=self._loop_observation,
+            memory_store=self.memory_store,
+            system_context_provider=_scoped_context,
+        )
 
     def _build_agent_loop(self):
         """A fresh AgentLoop (background tasks each get their
