@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,12 +41,15 @@ from afnan_ai.browser.base import (
     PageState,
     TabInfo,
 )
+from afnan_ai.browser.challenge import detect_challenge
+from afnan_ai.browser.downloads import DownloadManager
 from afnan_ai.browser.security import (
     ApprovalGate,
     classify_action,
 )
+from afnan_ai.browser.session import SessionManager
 from afnan_ai.log_config import get_logger
-from afnan_ai.redaction import MASK
+from afnan_ai.redaction import MASK, redact_text
 
 logger = get_logger(__name__)
 
@@ -78,6 +82,7 @@ class BrowserController:
         browser: str = "chromium",
         headless: bool = False,
         approval_gate: ApprovalGate | None = None,
+        challenge_guard: bool = True,
     ):
         self._backend = backend or PlaywrightBackend()
         # Sensitive-action approval gate (security layer): a
@@ -103,6 +108,15 @@ class BrowserController:
         self._observations: dict[str, str] = {}
         # task-level purpose per tab (multi-tab task management)
         self._tab_purposes: dict[str, str] = {}
+        # navigation history (session manager): bounded, redacted
+        self._history: list[dict[str, Any]] = []
+        self._history_seq = 0
+        # CAPTCHA guard: actions stop with human_required on
+        # human-check pages; detection only, never a bypass
+        self._challenge_guard = challenge_guard
+        # download + session managers (browser-layer services)
+        self.download_manager = DownloadManager(self._backend)
+        self.session_manager = SessionManager(self)
 
     # -- introspection ----------------------------------------------------
     @property
@@ -120,6 +134,32 @@ class BrowserController:
     @property
     def backend_name(self) -> str:
         return self._backend.name
+
+    def session_history(self) -> list[dict[str, Any]]:
+        """Recorded navigation history (redacted URLs)."""
+        return [dict(entry) for entry in self._history]
+
+    def _record_history(self, action: str, tab: _Tab) -> None:
+        """Append a navigation event to the session history.
+
+        URLs are redacted at record time so tokens never reach the
+        history, logs or LLM context.
+        """
+        self._history_seq += 1
+        self._history.append(
+            {
+                "seq": self._history_seq,
+                "at": datetime.now(timezone.utc).isoformat(),
+                "tab_id": tab.tab_id,
+                "action": action,
+                "url": redact_text(tab.url or ""),
+                "title": tab.title or "",
+                "purpose": self._tab_purposes.get(tab.tab_id, ""),
+            }
+        )
+        # bounded: keep the most recent 500 events
+        if len(self._history) > 500:
+            del self._history[:-500]
 
     # -- lifecycle ------------------------------------------------------------
     def launch(
@@ -230,6 +270,7 @@ class BrowserController:
         if url:
             self._goto(tab, url)
         self._refresh(tab)
+        self._record_history("new_tab", tab)
         logger.info("browser tab created: %s", tab.tab_id)
         return self._tab_info(tab).to_dict()
 
@@ -278,6 +319,7 @@ class BrowserController:
         tab = self._resolve_tab(tab_id, allow_default=False)
         self._active_tab_id = tab.tab_id
         self._refresh(tab)
+        self._record_history("select_tab", tab)
         return self._tab_info(tab).to_dict()
 
     def close_tab(self, tab_id: str | None = None) -> dict[str, Any]:
@@ -294,6 +336,7 @@ class BrowserController:
         del self._tabs[tab.tab_id]
         self._generations.pop(tab.tab_id, None)
         self._tab_purposes.pop(tab.tab_id, None)
+        self._record_history("close_tab", tab)
         self._elements = {
             ref: rec
             for ref, rec in self._elements.items()
@@ -406,6 +449,7 @@ class BrowserController:
         """Validate and click the target element."""
         tab, record, info = self._prepare_interaction(tab_id, target)
         self._require_usable(info, "click")
+        self._challenge_check(tab)
         sensitivity = self._gate_check("browser_click", tab, info)
         self._do(
             lambda: self._backend.click_element(
@@ -432,6 +476,7 @@ class BrowserController:
         it first)."""
         tab, record, info = self._prepare_interaction(tab_id, target)
         self._require_usable(info, "type into")
+        self._challenge_check(tab)
         if not info.editable:
             raise BrowserException(
                 f"Element {info.ref} (<{info.tag}>) is not an "
@@ -484,6 +529,7 @@ class BrowserController:
         """Clear an input/textarea's current value."""
         tab, record, info = self._prepare_interaction(tab_id, target)
         self._require_usable(info, "clear")
+        self._challenge_check(tab)
         if not info.editable:
             raise BrowserException(
                 f"Element {info.ref} (<{info.tag}>) is not an "
@@ -512,6 +558,7 @@ class BrowserController:
         """Select *value* in a <select> dropdown element."""
         tab, record, info = self._prepare_interaction(tab_id, target)
         self._require_usable(info, "select an option in")
+        self._challenge_check(tab)
         if info.tag != "select":
             raise BrowserException(
                 f"Element {info.ref} is a <{info.tag}>, not a "
@@ -550,6 +597,7 @@ class BrowserController:
                 code=BrowserErrorCode.OPERATION_FAILED,
             )
         tab = self._resolve_tab(tab_id)
+        self._challenge_check(tab)
         element_handle = None
         info = None
         if target:
@@ -590,6 +638,7 @@ class BrowserController:
         """
         tab, record, info = self._prepare_interaction(tab_id, target)
         self._require_usable(info, "upload to")
+        self._challenge_check(tab)
         if info.tag != "input" or (
             str(info.attributes.get("type", "")).lower() != "file"
         ):
@@ -902,6 +951,128 @@ class BrowserController:
             "page": self.current_page(tab.tab_id),
         }
 
+    # -- SPA / dynamic-page awareness -------------------------------------
+
+    def spa_state(self, tab_id: str | None = None) -> dict[str, Any]:
+        """Probe the page's dynamic state (SPA-aware).
+
+        Returns URL, title, ``document.readyState``, detected
+        frameworks (React / Next.js / Vue / Angular), text length,
+        element count and a content hash — everything needed to tell
+        whether client-side rendering has settled.  Falls back to a
+        probe composed from ordinary page reads when the driver has
+        no probe of its own.
+        """
+        tab = self._resolve_tab(tab_id)
+        probe: dict[str, Any] | None = None
+        try:
+            raw = self._backend.page_probe(tab.handle)
+            if isinstance(raw, dict) and raw:
+                probe = {
+                    "url": str(raw.get("url") or tab.url),
+                    "title": str(raw.get("title") or tab.title),
+                    "ready_state": str(
+                        raw.get("ready_state") or "unknown"
+                    ),
+                    "frameworks": list(raw.get("frameworks") or []),
+                    "text_length": int(raw.get("text_length") or 0),
+                    "element_count": int(raw.get("element_count") or 0),
+                    "content_hash": str(raw.get("content_hash") or ""),
+                }
+        except Exception:
+            probe = None
+        if probe is None:
+            text = ""
+            try:
+                text = self._backend.page_text(tab.handle) or ""
+            except Exception:
+                text = ""
+            element_count = 0
+            try:
+                element_count = len(
+                    self._backend.interactive_elements(tab.handle)
+                    or []
+                )
+            except Exception:
+                element_count = 0
+            self._refresh(tab, quiet=True)
+            probe = {
+                "url": tab.url,
+                "title": tab.title,
+                "ready_state": "unknown",
+                "frameworks": [],
+                "text_length": len(text),
+                "element_count": element_count,
+                "content_hash": hashlib.sha256(
+                    text.encode("utf-8", "replace")
+                ).hexdigest()[:12],
+            }
+        probe["tab_id"] = tab.tab_id
+        return probe
+
+    def wait_for_stable(
+        self,
+        tab_id: str | None = None,
+        *,
+        timeout_ms: int = 5000,
+        stable_polls: int = 2,
+    ) -> dict[str, Any]:
+        """Wait until a dynamic page stops changing.
+
+        Polls the SPA probe until URL, title, text length, element
+        count and content hash stay identical for ``stable_polls``
+        consecutive probes — covering client-side routing, async
+        rendering and DOM mutations without any blind fixed sleep.
+        Raises a structured ``timeout`` error when the page keeps
+        changing past the deadline.
+        """
+        if timeout_ms is None or timeout_ms <= 0:
+            raise BrowserException(
+                "timeout_ms must be a positive number of "
+                "milliseconds.",
+                code=BrowserErrorCode.TIMEOUT,
+            )
+        tab = self._resolve_tab(tab_id)
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        last_signature: tuple | None = None
+        stable_count = 0
+        probes = 0
+        probe: dict[str, Any] = {}
+        while True:
+            probe = self.spa_state(tab.tab_id)
+            probes += 1
+            signature = (
+                probe["url"],
+                probe["title"],
+                probe["text_length"],
+                probe["element_count"],
+                probe["content_hash"],
+            )
+            if signature == last_signature:
+                stable_count += 1
+            else:
+                stable_count = 0
+                last_signature = signature
+            if stable_count >= stable_polls:
+                return {
+                    **probe,
+                    "stable": True,
+                    "probes": probes,
+                }
+            if time.monotonic() >= deadline:
+                raise BrowserException(
+                    "Page did not become stable (SPA/dynamic "
+                    f"content) — timed out after {timeout_ms}ms "
+                    "waiting for a stable state.",
+                    code=BrowserErrorCode.TIMEOUT,
+                    details={
+                        "tab_id": tab.tab_id,
+                        "last_state": probe,
+                        "probes": probes,
+                    },
+                )
+            time.sleep(0.05)
+
     def screenshot(
         self,
         tab_id: str | None = None,
@@ -1136,6 +1307,31 @@ class BrowserController:
                 details={"ref": info.ref, "tag": info.tag},
             )
 
+    def _challenge_check(self, tab: _Tab) -> None:
+        """Stop with ``human_required`` on human-check pages.
+
+        Detection only — the challenge is never solved, bypassed or
+        worked around; the task pauses for a human.  Detection
+        problems never block ordinary actions.
+        """
+        if not self._challenge_guard:
+            return
+        try:
+            detection = detect_challenge(self, tab.tab_id)
+        except Exception:
+            return
+        if detection.get("detected"):
+            raise BrowserException(
+                "A human check (CAPTCHA / verification) is present "
+                "on this page; human intervention is required "
+                "before continuing (human_required).",
+                code=BrowserErrorCode.HUMAN_REQUIRED,
+                details={
+                    "tab_id": tab.tab_id,
+                    "challenge": detection,
+                },
+            )
+
     def _gate_check(
         self,
         tool_name: str,
@@ -1286,6 +1482,7 @@ class BrowserController:
             self._generations.get(tab.tab_id, 0) + 1
         )
         self._refresh(tab)
+        self._record_history("navigate", tab)
 
     @staticmethod
     def _validate_url(url: str) -> str:
@@ -1315,6 +1512,8 @@ class BrowserController:
         self._generations[tab.tab_id] = (
             self._generations.get(tab.tab_id, 0) + 1
         )
+        self._refresh(tab, quiet=True)
+        self._record_history(kind, tab)
         return self.current_page(tab.tab_id)
 
     def _refresh(self, tab: _Tab, *, quiet: bool = False) -> None:
