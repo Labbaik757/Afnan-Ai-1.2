@@ -83,6 +83,8 @@ class BrowserController:
         headless: bool = False,
         approval_gate: ApprovalGate | None = None,
         challenge_guard: bool = True,
+        challenge_handler=None,
+        challenge_wait_ms: int = 120_000,
     ):
         self._backend = backend or PlaywrightBackend()
         # Sensitive-action approval gate (security layer): a
@@ -114,6 +116,12 @@ class BrowserController:
         # CAPTCHA guard: actions stop with human_required on
         # human-check pages; detection only, never a bypass
         self._challenge_guard = challenge_guard
+        # Optional human-in-the-loop challenge flow: when a
+        # challenge is detected, the handler is asked (approval);
+        # if the human solves the check in the browser, the
+        # action resumes automatically once the page clears.
+        self.challenge_handler = challenge_handler
+        self._challenge_wait_ms = challenge_wait_ms
         # download + session managers (browser-layer services)
         self.download_manager = DownloadManager(self._backend)
         self.session_manager = SessionManager(self)
@@ -1311,7 +1319,11 @@ class BrowserController:
         """Stop with ``human_required`` on human-check pages.
 
         Detection only — the challenge is never solved, bypassed or
-        worked around; the task pauses for a human.  Detection
+        worked around.  When a challenge handler is registered it
+        is asked for approval; on approval the controller waits
+        for the human to solve the check in the browser and then
+        lets the action resume automatically.  Otherwise the task
+        pauses for a human (``human_required``).  Detection
         problems never block ordinary actions.
         """
         if not self._challenge_guard:
@@ -1320,17 +1332,103 @@ class BrowserController:
             detection = detect_challenge(self, tab.tab_id)
         except Exception:
             return
-        if detection.get("detected"):
+        if not detection.get("detected"):
+            return
+        handler = self.challenge_handler
+        if handler is not None:
+            try:
+                approved = bool(handler(dict(detection)))
+            except Exception:
+                approved = False
+            if approved:
+                cleared, _last = self._wait_clear(
+                    tab, self._challenge_wait_ms
+                )
+                if cleared:
+                    logger.info(
+                        "browser challenge cleared by human on "
+                        "tab %s; resuming",
+                        tab.tab_id,
+                    )
+                    return
+        raise BrowserException(
+            "A human check (CAPTCHA / verification) is present "
+            "on this page; human intervention is required "
+            "before continuing (human_required).",
+            code=BrowserErrorCode.HUMAN_REQUIRED,
+            details={
+                "tab_id": tab.tab_id,
+                "challenge": detection,
+            },
+        )
+
+    def _wait_clear(
+        self, tab: _Tab, timeout_ms: int
+    ) -> tuple[bool, dict[str, Any]]:
+        """Poll until no challenge is detected (condition-based).
+
+        Returns (cleared, last_detection); never raises.
+        """
+        deadline = time.monotonic() + max(0, timeout_ms) / 1000.0
+        last: dict[str, Any] = {"detected": True}
+        while True:
+            try:
+                last = detect_challenge(self, tab.tab_id)
+            except Exception:
+                return True, {"detected": False}
+            if not last.get("detected"):
+                return True, last
+            if time.monotonic() >= deadline:
+                return False, last
+            time.sleep(0.25)
+
+    def wait_for_challenge_clear(
+        self, tab_id: str | None = None, *, timeout_ms: int = 120_000
+    ) -> dict[str, Any]:
+        """Wait for a human to solve the page's human check.
+
+        The human solves the CAPTCHA/verification in the browser
+        themselves; this only watches (condition-based polling)
+        until the challenge disappears.  Raises a structured
+        ``human_required`` error when the wait times out with the
+        challenge still present.
+        """
+        if timeout_ms is None or timeout_ms <= 0:
             raise BrowserException(
-                "A human check (CAPTCHA / verification) is present "
-                "on this page; human intervention is required "
-                "before continuing (human_required).",
-                code=BrowserErrorCode.HUMAN_REQUIRED,
-                details={
-                    "tab_id": tab.tab_id,
-                    "challenge": detection,
-                },
+                "timeout_ms must be a positive number of "
+                "milliseconds.",
+                code=BrowserErrorCode.TIMEOUT,
             )
+        tab = self._resolve_tab(tab_id)
+        cleared, last = self._wait_clear(tab, timeout_ms)
+        if not cleared:
+            raise BrowserException(
+                "The human check is still present after waiting "
+                f"{timeout_ms}ms; human intervention is still "
+                "required (human_required).",
+                code=BrowserErrorCode.HUMAN_REQUIRED,
+                details={"tab_id": tab.tab_id, "challenge": last},
+            )
+        return {
+            "cleared": True,
+            "human_required": False,
+            "tab_id": tab.tab_id,
+            "page": self.current_page(tab.tab_id),
+        }
+
+    def set_challenge_handler(
+        self, handler: Any, *, wait_ms: int | None = None
+    ) -> None:
+        """Register (or clear, with None) the challenge approver.
+
+        The handler receives the detection dict and returns True
+        when the human will solve the check in the browser; the
+        blocked action then waits (up to ``wait_ms``) and resumes
+        automatically once the challenge clears.
+        """
+        self.challenge_handler = handler
+        if wait_ms is not None:
+            self._challenge_wait_ms = int(wait_ms)
 
     def _gate_check(
         self,

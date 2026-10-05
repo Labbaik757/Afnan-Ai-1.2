@@ -89,6 +89,7 @@ class AfnanAgent:
         enable_browser_tools: bool = True,
         browser_approver=None,
         security_policy=None,
+        challenge_handler=None,
         screen_observer: ScreenObserver | None = None,
         enable_screen_tools: bool = True,
     ):
@@ -117,6 +118,11 @@ class AfnanAgent:
             self.browser.approval_gate = ApprovalGate(
                 policy=security_policy, approver=browser_approver
             )
+        # Human-in-the-loop CAPTCHA flow: on a human check, the
+        # handler is asked; the human solves it in the browser
+        # and the action resumes automatically once it clears.
+        if challenge_handler is not None:
+            self.browser.challenge_handler = challenge_handler
         if enable_browser_tools:
             register_browser_tools(self.tools, self.browser)
         # Screen observation: structured visual information
@@ -279,6 +285,18 @@ class AfnanAgent:
         """
         self.browser.approval_gate.approver = approver
         return self.tools.get(name)
+
+    def set_challenge_handler(self, handler) -> None:
+        """Set the human-check handler (CAPTCHA flow).
+
+        ``handler`` is a callable taking the challenge detection
+        dict and returning True when the human will solve the
+        check in the browser; the blocked browser action then
+        waits and resumes automatically once the check clears.
+        The agent never solves a challenge itself.  None restores
+        the default: actions pause with human_required.
+        """
+        self.browser.challenge_handler = handler
 
     def list_tools(self):
         return self.tools.definitions()

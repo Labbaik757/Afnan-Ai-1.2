@@ -203,6 +203,13 @@ def set_browser_approver(approver):
     _agent.set_browser_approver(approver)
 
 
+def set_challenge_handler(handler):
+    """Set the human-check handler for CAPTCHA pages: a callable
+    detection -> bool.  True means the human solves the check in
+    the browser and the action resumes once it clears."""
+    _agent.set_challenge_handler(handler)
+
+
 def listen_command(timeout=5, phrase_time=6):
     return _agent.listen_command(timeout=timeout, phrase_time=phrase_time)
 
