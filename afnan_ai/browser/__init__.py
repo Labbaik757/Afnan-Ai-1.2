@@ -38,6 +38,7 @@ from afnan_ai.browser.security import (
     classify_action,
 )
 from afnan_ai.browser.tools import create_browser_tools, register_browser_tools
+from afnan_ai.browser.workflow import BrowserTaskResult, BrowserWorkflow
 
 __all__ = [
     "SUPPORTED_BROWSERS",
@@ -51,6 +52,8 @@ __all__ = [
     "BrowserError",
     "BrowserErrorCode",
     "BrowserException",
+    "BrowserTaskResult",
+    "BrowserWorkflow",
     "ElementInfo",
     "PageState",
     "PlaywrightBackend",

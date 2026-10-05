@@ -453,9 +453,17 @@ class BrowserTypeTool(_BrowserTool):
 
     def run(self, arguments: dict[str, Any]) -> Any:
         tab_id, timeout = _tab_and_timeout(arguments)
+        # "text" is the value being typed here, not a locator —
+        # keep it out of the target or it would be mistaken for
+        # a visible-text locator.
+        target_args = {
+            key: value
+            for key, value in arguments.items()
+            if key != "text"
+        }
         return self._call(
             self.controller.type_text,
-            _target_from(arguments),
+            _target_from(target_args),
             arguments["text"],
             tab_id=tab_id,
             clear_first=bool(arguments.get("clear_first", False)),
