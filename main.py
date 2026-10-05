@@ -301,6 +301,18 @@ def run_proactive_sweep():
     return _agent.run_proactive_sweep()
 
 
+def get_security_center():
+    """Return the central SecurityCenter (None when
+    disabled)."""
+    return _agent.get_security_center()
+
+
+def set_security_approver(approver) -> None:
+    """Set the human approver for sensitive/irreversible
+    actions (None restores fail-safe refusal)."""
+    return _agent.set_security_approver(approver)
+
+
 def get_memory_store():
     """Return the persistent MemoryStore (verified facts,
     preferences, task summaries; secrets are refused)."""

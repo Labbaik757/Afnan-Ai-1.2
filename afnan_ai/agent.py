@@ -116,6 +116,8 @@ class AfnanAgent:
         proactive_config=None,
         proactive_approver=None,
         enable_proactive: bool = True,
+        security_approver=None,
+        enable_security_center: bool = True,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -481,6 +483,17 @@ class AfnanAgent:
                 approver=proactive_approver,
                 task_runner=self._run_proactive_task,
             )
+        # Security Center: built after every tool family is
+        # registered so capability grants cover them all.
+        # From here on, every tool call on this registry is
+        # authorized through the center.
+        self.security_center = (
+            self._build_security_center(
+                security_approver, memory_base
+            )
+            if enable_security_center
+            else None
+        )
         self.orchestrator: OrchestratorAgent = orchestrator or OrchestratorAgent(
             planner=self.planner,
             executor=self.executor,
@@ -908,6 +921,19 @@ class AfnanAgent:
             return []
         return self.proactive_engine.run_sweep()
 
+    # -- security center ------------------------------------------
+    def get_security_center(self):
+        """The central SecurityCenter: permissions, risk
+        classification, approvals, vault, audit (None when
+        disabled)."""
+        return self.security_center
+
+    def set_security_approver(self, approver) -> None:
+        """Set the human approver for sensitive/irreversible
+        actions (None restores fail-safe refusal)."""
+        if self.security_center is not None:
+            self.security_center.set_approver(approver)
+
     def _run_proactive_task(self, task_id: str):
         """Auto-execution path for explicitly configured
         read-only low-risk ideas: claim exactly this task
@@ -951,6 +977,31 @@ class AfnanAgent:
             retry=False,
         )
         return self.task_manager.get(task_id)
+
+    # -- security center --------------------------------------------
+    def _build_security_center(self, approver, memory_base):
+        """Central, mandatory security authority.  Every
+        tool call on this agent's registry is authorized
+        through it."""
+        from afnan_ai.security import SecurityCenter
+
+        center = SecurityCenter(
+            audit_path=str(memory_base / "security_audit.jsonl"),
+            approver=approver,
+        )
+        # Capability-based defaults: the agent may use the
+        # domains its registered tools live in — least
+        # privilege narrows this per task/subagent/skill.
+        domains = set()
+        for name in self.tools.names():
+            domain, _, _ = str(name).partition("_")
+            if domain:
+                domains.add(f"{domain}.*")
+        # Built-in/tool-less capabilities the loop needs.
+        domains.update({"memory.*", "note.*"})
+        center.grant_agent_capabilities(*sorted(domains))
+        self.tools.security_center = center
+        return center
 
     def _build_subagent_loop(
         self, spec, scoped_tools, context_text, checkpointer=None
