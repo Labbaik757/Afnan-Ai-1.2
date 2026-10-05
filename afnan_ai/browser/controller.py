@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from afnan_ai.browser.accessibility import derive_nodes, normalize_snapshot
 from afnan_ai.browser.backend import (
     SUPPORTED_BROWSERS,
     BrowserBackend,
@@ -100,6 +101,8 @@ class BrowserController:
         self._generations: dict[str, int] = {}
         # last observation fingerprint per tab (page-change detection)
         self._observations: dict[str, str] = {}
+        # task-level purpose per tab (multi-tab task management)
+        self._tab_purposes: dict[str, str] = {}
 
     # -- introspection ----------------------------------------------------
     @property
@@ -198,8 +201,15 @@ class BrowserController:
         return {"closed": True, "was_running": was_running}
 
     # -- tabs -----------------------------------------------------------------
-    def new_tab(self, url: str | None = None) -> dict[str, Any]:
-        """Create a tab (optionally navigating it) and select it."""
+    def new_tab(
+        self, url: str | None = None, *, purpose: str | None = None
+    ) -> dict[str, Any]:
+        """Create a tab (optionally navigating it) and select it.
+
+        ``purpose`` records *why* the task opened this tab (e.g.
+        "pricing research"), so multi-tab work can always tell
+        which tab belongs to which line of work.
+        """
         self._require_running()
         try:
             handle = self._backend.new_page()
@@ -215,11 +225,24 @@ class BrowserController:
         self._tabs[tab.tab_id] = tab
         self._generations[tab.tab_id] = 0
         self._active_tab_id = tab.tab_id
+        if purpose:
+            self._tab_purposes[tab.tab_id] = str(purpose)
         if url:
             self._goto(tab, url)
         self._refresh(tab)
         logger.info("browser tab created: %s", tab.tab_id)
         return self._tab_info(tab).to_dict()
+
+    def set_tab_purpose(self, tab_id: str, purpose: str) -> dict[str, Any]:
+        """Label a tab with its task-level purpose."""
+        tab = self._resolve_tab(tab_id)
+        self._tab_purposes[tab.tab_id] = str(purpose)
+        self._refresh(tab, quiet=True)
+        return self._tab_info(tab).to_dict()
+
+    def tab_purpose(self, tab_id: str) -> str:
+        tab = self._resolve_tab(tab_id)
+        return self._tab_purposes.get(tab.tab_id, "")
 
     def list_tabs(self) -> list[dict[str, Any]]:
         """Snapshot of all open tabs (empty when none are open;
@@ -270,6 +293,7 @@ class BrowserController:
             ) from e
         del self._tabs[tab.tab_id]
         self._generations.pop(tab.tab_id, None)
+        self._tab_purposes.pop(tab.tab_id, None)
         self._elements = {
             ref: rec
             for ref, rec in self._elements.items()
@@ -729,6 +753,92 @@ class BrowserController:
                 "title": page["title"],
                 "page_changed": changed,
             },
+        }
+
+    def accessibility_tree(
+        self, *, tab_id: str | None = None
+    ) -> dict[str, Any]:
+        """The page's accessibility tree, normalized.
+
+        The browser's own accessibility snapshot is preferred
+        (it names elements the way users perceive them); when
+        the driver cannot provide one, an equivalent tree is
+        derived from the DOM's interactive elements, whose nodes
+        carry live element refs.  Either way the shape is the
+        same, so semantic tooling never cares which source
+        answered.
+        """
+        tab = self._resolve_tab(tab_id)
+        nodes: list[dict[str, Any]] = []
+        source = "accessibility"
+        try:
+            raw = self._backend.accessibility_snapshot(tab.handle)
+            nodes = normalize_snapshot(raw)
+        except BrowserException:
+            nodes = []
+        except Exception:
+            nodes = []
+        if not nodes:
+            observed = self.observe(tab_id=tab.tab_id)
+            nodes = derive_nodes(observed["elements"])
+            source = "dom"
+        for node in nodes:
+            node["tab_id"] = tab.tab_id
+        interactive = sum(
+            1 for n in nodes if n["role"] not in ("generic", "text")
+        )
+        return {
+            "tab_id": tab.tab_id,
+            "source": source,
+            "nodes": nodes,
+            "count": len(nodes),
+            "observation": {
+                "type": "accessibility_tree",
+                "summary": (
+                    f"Accessibility tree ({source}) for tab "
+                    f"{tab.tab_id}: {len(nodes)} nodes, "
+                    f"{interactive} named/interactive"
+                ),
+                "url": self.current_page(tab.tab_id)["url"],
+                "source": source,
+                "count": len(nodes),
+            },
+        }
+
+    def page_document(
+        self, *, tab_id: str | None = None
+    ) -> dict[str, Any]:
+        """Raw structured page document for content extraction.
+
+        Uses the driver's structured extraction; when that is
+        unavailable, falls back to the flat page text (marked
+        ``structured=False``) so extraction degrades instead of
+        failing.
+        """
+        tab = self._resolve_tab(tab_id)
+        doc: dict[str, Any] = {}
+        try:
+            doc = self._backend.page_content(tab.handle) or {}
+        except BrowserException:
+            doc = {}
+        except Exception:
+            doc = {}
+        page = self.current_page(tab.tab_id)
+        if doc:
+            return {**doc, "structured": True,
+                    "url": doc.get("url") or page["url"],
+                    "title": doc.get("title") or page["title"]}
+        observed = self.observe(tab_id=tab.tab_id)
+        return {
+            "title": page["title"],
+            "url": page["url"],
+            "text": observed["text"],
+            "headings": [],
+            "paragraphs": [],
+            "lists": [],
+            "links": [],
+            "tables": [],
+            "structured": False,
         }
 
     def wait_for(
@@ -1226,4 +1336,5 @@ class BrowserController:
             url=tab.url,
             title=tab.title,
             active=tab.tab_id == self._active_tab_id,
+            purpose=self._tab_purposes.get(tab.tab_id, ""),
         )

@@ -148,6 +148,19 @@ class BrowserBackend(ABC):
         """Return the page's visible text."""
         self._unsupported("reading page text")
 
+    def accessibility_snapshot(self, handle: Any) -> Any:
+        """The browser's accessibility tree (driver-native).
+
+        Backends without one raise via ``_unsupported`` and the
+        controller derives a tree from the DOM instead.
+        """
+        self._unsupported("accessibility snapshot")
+
+    def page_content(self, handle: Any) -> dict[str, Any]:
+        """Structured page document (headings, paragraphs, lists,
+        links, tables) for content extraction."""
+        self._unsupported("page content extraction")
+
     def interactive_elements(
         self, handle: Any, limit: int
     ) -> list[Any]:
@@ -461,6 +474,58 @@ class PlaywrightBackend(BrowserBackend):
             return handle.inner_text("body", timeout=3000) or ""
         except Exception as e:
             raise self._driver_error(e, "read page text") from e
+
+    def accessibility_snapshot(self, handle: Any) -> Any:
+        try:
+            accessibility = handle.accessibility
+        except AttributeError as e:
+            raise BrowserException(
+                "This browser driver does not expose an "
+                "accessibility tree",
+                code=BrowserErrorCode.OPERATION_FAILED,
+            ) from e
+        try:
+            return accessibility.snapshot() or {}
+        except Exception as e:
+            raise self._driver_error(e, "accessibility snapshot") from e
+
+    _CONTENT_JS = """() => {
+      const clean = (el) => ((el && el.innerText) || '')
+        .replace(/\\s+/g, ' ').trim();
+      const headings = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')]
+        .map(h => ({level: parseInt(h.tagName[1], 10), text: clean(h)}))
+        .filter(h => h.text);
+      const paragraphs = [...document.querySelectorAll('p')]
+        .map(p => clean(p)).filter(Boolean);
+      const lists = [...document.querySelectorAll('ul, ol')]
+        .map(l => [...l.querySelectorAll(':scope > li')]
+          .map(li => clean(li)).filter(Boolean))
+        .filter(l => l.length);
+      const links = [...document.querySelectorAll('a[href]')]
+        .map(a => ({text: clean(a), url: a.href}))
+        .filter(l => l.url && !l.url.startsWith('javascript:'));
+      const tables = [...document.querySelectorAll('table')]
+        .map(t => ({
+          caption: clean(t.querySelector('caption')),
+          rows: [...t.querySelectorAll('tr')]
+            .map(tr => [...tr.querySelectorAll('th, td')]
+              .map(c => clean(c)))
+        }))
+        .filter(t => t.rows.length);
+      return {
+        title: document.title || '',
+        url: location.href,
+        headings, paragraphs, lists, links, tables,
+        text: clean(document.body)
+      };
+    }"""
+
+    def page_content(self, handle: Any) -> dict[str, Any]:
+        try:
+            result = handle.evaluate(self._CONTENT_JS)
+        except Exception as e:
+            raise self._driver_error(e, "page content extraction") from e
+        return result if isinstance(result, dict) else {}
 
     def interactive_elements(
         self, handle: Any, limit: int
