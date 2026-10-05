@@ -247,6 +247,11 @@ def set_connector_approver(approver) -> None:
     return _agent.set_connector_approver(approver)
 
 
+def get_trajectory_store():
+    """Return the persistent per-task TrajectoryStore."""
+    return _agent.get_trajectory_store()
+
+
 def get_memory_store():
     """Return the persistent MemoryStore (verified facts,
     preferences, task summaries; secrets are refused)."""

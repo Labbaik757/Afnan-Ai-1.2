@@ -417,6 +417,71 @@ def main() -> int:
         failures.append(f"connector tools check crashed: {e}")
         print(f"FAIL: connector tools check crashed: {e}")
 
+    # ---- Long-context & trajectory reasoning ------------------------
+    # The context package is a consumer of recorded context,
+    # not a second orchestration layer: it must stay free of
+    # browser/computer/driver coupling, must never import the
+    # agent loop at module level (lazy use only, no cycle),
+    # and the AgentLoop itself must never import it at
+    # runtime (it receives a factory instead).
+    import ast as _ast
+
+    context_dir = ROOT / "afnan_ai" / "context"
+    context_coupling = []
+    for path in sorted(context_dir.glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        tree = _ast.parse(source)
+        top_imports = []
+        for node in tree.body:
+            if isinstance(node, _ast.Import):
+                top_imports.extend(a.name for a in node.names)
+            elif isinstance(node, _ast.ImportFrom):
+                top_imports.append(node.module or "")
+        for imported in top_imports:
+            for bad in ("afnan_ai.browser", "afnan_ai.computer",
+                        "afnan_ai.agent_loop", "playwright"):
+                if bad in imported:
+                    context_coupling.append(
+                        f"{path.name}:{imported}"
+                    )
+        for bad in ("sys.platform", "startfile"):
+            if bad in source:
+                context_coupling.append(f"{path.name}:{bad}")
+    if context_coupling:
+        failures.append(
+            f"context layer coupling: {context_coupling}"
+        )
+        print(f"FAIL: context layer coupling: {context_coupling}")
+    else:
+        print("OK: context layer is decoupled (no browser/computer/loop imports)")
+
+    loop_source = (
+        ROOT / "afnan_ai" / "agent_loop.py"
+    ).read_text(encoding="utf-8")
+    if "afnan_ai.context" in loop_source:
+        failures.append("agent_loop imports the context package")
+        print(
+            "FAIL: agent_loop.py references afnan_ai.context — "
+            "the loop must stay a context consumer via factory"
+        )
+    else:
+        print("OK: AgentLoop stays context-agnostic (factory-injected)")
+
+    try:
+        from afnan_ai.context import (
+            ContextManager, TrajectoryStore, ContextBudget,
+        )
+        _ctx = ContextManager(ContextBudget(max_chars=500))
+        _ctx.begin_run("guard check")
+        _ctx.record_action("search_google")
+        _section = _ctx.cycle_context(query="guard check")
+        assert "[TRUSTED user instructions]" in _section
+        assert "guard check" in _section
+        print("OK: ContextManager builds zoned budgeted context")
+    except Exception as e:  # noqa: BLE001 - report, don't crash
+        failures.append(f"context smoke check crashed: {e}")
+        print(f"FAIL: context smoke check crashed: {e}")
+
     for path in sorted(ROOT.rglob("*.py")):
         if ".git" in path.parts or "__pycache__" in path.parts:
             continue
