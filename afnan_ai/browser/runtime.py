@@ -484,6 +484,43 @@ class AfnanBrowserRuntime:
     def screenshot(self, handle: Any) -> bytes:
         return self._call(self.adapter.screenshot, handle)
 
+    def element_box(
+        self, handle: Any, element: Any
+    ) -> dict[str, Any] | None:
+        return self._call(self.adapter.element_box, handle, element)
+
+    def mouse_click(
+        self, handle: Any, x: float, y: float, click_count: int = 1
+    ) -> None:
+        return self._call(
+            self.adapter.mouse_click, handle, x, y, click_count
+        )
+
+    def mouse_move(self, handle: Any, x: float, y: float) -> None:
+        return self._call(self.adapter.mouse_move, handle, x, y)
+
+    def mouse_drag(
+        self, handle: Any, x1: float, y1: float, x2: float, y2: float
+    ) -> None:
+        return self._call(
+            self.adapter.mouse_drag, handle, x1, y1, x2, y2
+        )
+
+    def focus_element(
+        self, handle: Any, element: Any, timeout_ms: int
+    ) -> None:
+        return self._call(
+            self.adapter.focus_element, handle, element, timeout_ms
+        )
+
+    def set_checked(
+        self, handle: Any, element: Any, checked: bool, timeout_ms: int
+    ) -> None:
+        return self._call(
+            self.adapter.set_checked, handle, element, checked,
+            timeout_ms,
+        )
+
     def wait_for(
         self, handle: Any, spec: dict[str, Any], timeout_ms: int
     ) -> None:

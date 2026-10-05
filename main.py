@@ -189,6 +189,13 @@ def get_browser_runtime():
     return _agent.get_browser_runtime()
 
 
+def get_browser_perception():
+    """Return the unified BrowserPerception layer
+    (accessibility/DOM/visual observation + computer
+    actions)."""
+    return _agent.get_browser_perception()
+
+
 def get_recovery():
     """Return the RecoveryManager used by the orchestrator
     (replans after failed/uncertain steps, attempts recorded
