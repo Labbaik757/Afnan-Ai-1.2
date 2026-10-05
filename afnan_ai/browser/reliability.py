@@ -126,16 +126,34 @@ class BrowserReliability:
         self.controller = controller
 
     # -- Verifier observation provider ---------------------------------
+    #: tools whose effect is *not* a page change; verifying them
+    #: against page state would be meaningless (a screenshot is
+    #: verified by its file, an observation by its content)
+    _NON_PAGE_TOOLS = frozenset({
+        "browser_launch",
+        "browser_connect",
+        "browser_shutdown",
+        "browser_list_tabs",
+        "browser_observe_page",
+        "browser_screenshot",
+        "browser_current_page",
+        "browser_find_elements",
+        "browser_inspect_element",
+    })
+
     def observe_state(self, step: Any = None) -> dict[str, Any] | None:
         """Fresh page observation for a ``browser_*`` step.
 
-        Returns None for non-browser steps and whenever the
-        browser cannot be observed, so verification falls back
-        to the action's own report.
+        Returns None for non-browser steps, for tools whose
+        effect is not a page change, and whenever the browser
+        cannot be observed, so verification falls back to the
+        action's own report.
         """
-        if step is not None and not str(
-            getattr(step, "tool_name", "")
-        ).startswith("browser_"):
+        tool_name = str(getattr(step, "tool_name", "")) if step else ""
+        if step is not None and (
+            not tool_name.startswith("browser_")
+            or tool_name in self._NON_PAGE_TOOLS
+        ):
             return None
         try:
             observation = self.controller.observe()

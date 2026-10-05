@@ -39,7 +39,12 @@ from afnan_ai.browser.base import (
     PageState,
     TabInfo,
 )
+from afnan_ai.browser.security import (
+    ApprovalGate,
+    classify_action,
+)
 from afnan_ai.log_config import get_logger
+from afnan_ai.redaction import MASK
 
 logger = get_logger(__name__)
 
@@ -71,8 +76,14 @@ class BrowserController:
         *,
         browser: str = "chromium",
         headless: bool = False,
+        approval_gate: ApprovalGate | None = None,
     ):
         self._backend = backend or PlaywrightBackend()
+        # Sensitive-action approval gate (security layer): a
+        # default gate is always present, so purchases, sends,
+        # destructive clicks, uploads etc. never run without a
+        # human approver; pass a gate to configure it.
+        self.approval_gate = approval_gate or ApprovalGate()
         self._default_browser = browser
         self._default_headless = headless
         self._running = False
@@ -371,6 +382,7 @@ class BrowserController:
         """Validate and click the target element."""
         tab, record, info = self._prepare_interaction(tab_id, target)
         self._require_usable(info, "click")
+        sensitivity = self._gate_check("browser_click", tab, info)
         self._do(
             lambda: self._backend.click_element(
                 tab.handle, record["handle"], self._timeout(timeout_ms)
@@ -378,7 +390,10 @@ class BrowserController:
             "click",
             record,
         )
-        return self._interaction_result(tab, "click", info)
+        result = self._interaction_result(tab, "click", info)
+        if sensitivity:
+            result["sensitivity"] = sensitivity
+        return result
 
     def type_text(
         self,
@@ -400,6 +415,15 @@ class BrowserController:
                 code=BrowserErrorCode.INVALID_ELEMENT,
                 details={"ref": info.ref, "tag": info.tag},
             )
+        sensitivity = self._gate_check(
+            "browser_type", tab, info,
+            arguments={
+                "text": text,
+                "field": info.attributes.get("id")
+                or info.attributes.get("name", ""),
+                "field_type": info.attributes.get("type", ""),
+            },
+        )
         if clear_first:
             self._do(
                 lambda: self._backend.clear_element(
@@ -416,7 +440,14 @@ class BrowserController:
             record,
         )
         result = self._interaction_result(tab, "type", info)
-        result["value"] = text
+        # A password's value is a secret: it is never echoed back
+        # into results (and therefore never into AgentState/logs)
+        is_password = (
+            str(info.attributes.get("type", "")).lower() == "password"
+        )
+        result["value"] = MASK if is_password else text
+        if sensitivity:
+            result["sensitivity"] = sensitivity
         return result
 
     def clear_field(
@@ -436,6 +467,7 @@ class BrowserController:
                 code=BrowserErrorCode.INVALID_ELEMENT,
                 details={"ref": info.ref, "tag": info.tag},
             )
+        self._gate_check("browser_clear", tab, info)
         self._do(
             lambda: self._backend.clear_element(
                 tab.handle, record["handle"], self._timeout(timeout_ms)
@@ -463,6 +495,7 @@ class BrowserController:
                 code=BrowserErrorCode.INVALID_ELEMENT,
                 details={"ref": info.ref, "tag": info.tag},
             )
+        self._gate_check("browser_select_option", tab, info)
         self._do(
             lambda: self._backend.select_option(
                 tab.handle, record["handle"], value,
@@ -498,6 +531,10 @@ class BrowserController:
         if target:
             _, record, info = self._prepare_interaction(tab_id, target)
             element_handle = record["handle"]
+            self._gate_check(
+                "browser_press_key", tab, info,
+                arguments={"key": str(key)},
+            )
         self._do(
             lambda: self._backend.press_key(
                 tab.handle, element_handle, str(key),
@@ -510,6 +547,58 @@ class BrowserController:
         if info is not None:
             result["element"] = info.to_dict()
         result["page"] = self.current_page(tab.tab_id)
+        return result
+
+    def upload_file(
+        self,
+        target: dict[str, Any] | None,
+        file_path: str,
+        *,
+        tab_id: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Upload a local file through an <input type=file>.
+
+        Uploads are a sensitive action (a local file leaves the
+        machine), so the approval gate runs before the file is
+        touched; validation failures (wrong element, missing
+        file) are structured errors, never partial uploads.
+        """
+        tab, record, info = self._prepare_interaction(tab_id, target)
+        self._require_usable(info, "upload to")
+        if info.tag != "input" or (
+            str(info.attributes.get("type", "")).lower() != "file"
+        ):
+            raise BrowserException(
+                f"Element {info.ref} (<{info.tag}> "
+                f"type={info.attributes.get('type')!r}) is not a "
+                "file input; cannot upload through it",
+                code=BrowserErrorCode.INVALID_ELEMENT,
+                details={"ref": info.ref, "tag": info.tag},
+            )
+        path = Path(str(file_path)).expanduser()
+        if not path.is_file():
+            raise BrowserException(
+                f"Upload failed: file not found: {path}",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"path": str(path)},
+            )
+        sensitivity = self._gate_check(
+            "browser_upload_file", tab, info,
+            arguments={"path": str(path)},
+        )
+        self._do(
+            lambda: self._backend.set_input_files(
+                tab.handle, record["handle"], str(path),
+                self._timeout(timeout_ms),
+            ),
+            "upload file to",
+            record,
+        )
+        result = self._interaction_result(tab, "upload", info)
+        result["uploaded_file"] = path.name
+        if sensitivity:
+            result["sensitivity"] = sensitivity
         return result
 
     def scroll_page(
@@ -776,6 +865,10 @@ class BrowserController:
         }
         if locator.get("role") and locator.get("name"):
             strategies["name"] = locator["name"]
+        if locator.get("frame"):
+            # look inside an iframe (CSS also pierces open shadow
+            # DOM, so shadow content needs no extra key)
+            strategies["frame"] = locator["frame"]
         if not strategies:
             raise BrowserException(
                 "A locator needs at least one of: selector, "
@@ -839,16 +932,24 @@ class BrowserController:
                 code=BrowserErrorCode.OPERATION_FAILED,
                 details={"ref": record["ref"]},
             ) from e
+        attributes = dict(data.get("attributes", {}))
+        value = str(data.get("value", ""))
+        if str(attributes.get("type", "")).lower() == "password":
+            # A password field's content is a secret: never carry
+            # it into element records, observations or AgentState.
+            value = MASK
+            if "value" in attributes:
+                attributes["value"] = MASK
         return ElementInfo(
             ref=record["ref"],
             tab_id=tab.tab_id,
             tag=str(data.get("tag", "")),
             text=str(data.get("text", "")),
-            attributes=dict(data.get("attributes", {})),
+            attributes=attributes,
             visible=bool(data.get("visible", True)),
             enabled=bool(data.get("enabled", True)),
             editable=bool(data.get("editable", False)),
-            value=str(data.get("value", "")),
+            value=value,
         )
 
     def _resolve_element(self, tab: _Tab, target):
@@ -924,6 +1025,54 @@ class BrowserController:
                 code=BrowserErrorCode.INVALID_ELEMENT,
                 details={"ref": info.ref, "tag": info.tag},
             )
+
+    def _gate_check(
+        self,
+        tool_name: str,
+        tab: _Tab,
+        info: ElementInfo | None = None,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Classify an interaction and run the approval gate.
+
+        Returns the sensitivity record for sensitive-but-allowed
+        actions (None for ordinary ones).  Raises a structured
+        BrowserException — approval_required / approval_denied —
+        *before* anything executes when a sensitive action may
+        not run.
+        """
+        risk = classify_action(
+            tool_name,
+            element=info.to_dict() if info is not None else None,
+            arguments=arguments,
+        )
+        if not risk.sensitive:
+            return None
+        page = self.current_page(tab.tab_id)
+        decision = self.approval_gate.check(
+            risk,
+            tool_name=tool_name,
+            arguments=arguments,
+            url=page["url"],
+            title=page["title"],
+        )
+        if not decision.allowed:
+            code = (
+                BrowserErrorCode.APPROVAL_DENIED
+                if "Denied by human" in decision.detail
+                else BrowserErrorCode.APPROVAL_REQUIRED
+            )
+            raise BrowserException(
+                f"{decision.detail}: {tool_name} "
+                f"({risk.category}) was not executed",
+                code=code,
+                details={
+                    "category": risk.category,
+                    "reason": risk.reason,
+                    "tool": tool_name,
+                },
+            )
+        return decision.to_dict()
 
     def _do(self, operation, action: str, record) -> None:
         try:

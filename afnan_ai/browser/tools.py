@@ -269,6 +269,7 @@ _TARGET_PROPERTIES = {
     "role": {"type": "string"},
     "name": {"type": "string"},
     "text": {"type": "string"},
+    "frame": {"type": "string"},
     "tab_id": {"type": "string"},
     "timeout_ms": {"type": "integer"},
 }
@@ -279,7 +280,7 @@ def _target_from(arguments: dict[str, Any]) -> dict[str, Any] | None:
         return {"ref": arguments["ref"]}
     locator = {
         key: arguments[key]
-        for key in ("selector", "test_id", "label", "placeholder", "role", "name", "text")
+        for key in ("selector", "test_id", "label", "placeholder", "role", "name", "text", "frame")
         if arguments.get(key)
     }
     return {"locator": locator} if locator else None
@@ -307,6 +308,7 @@ class BrowserFindElementsTool(_BrowserTool):
             "role": {"type": "string"},
             "name": {"type": "string"},
             "text": {"type": "string"},
+            "frame": {"type": "string"},
             "tab_id": {"type": "string"},
             "limit": {"type": "integer"},
         },
@@ -317,7 +319,7 @@ class BrowserFindElementsTool(_BrowserTool):
     def run(self, arguments: dict[str, Any]) -> Any:
         locator = {
             key: arguments[key]
-            for key in ("selector", "test_id", "label", "placeholder", "role", "name", "text")
+            for key in ("selector", "test_id", "label", "placeholder", "role", "name", "text", "frame")
             if arguments.get(key)
         }
         elements = self._call(
@@ -627,6 +629,36 @@ class BrowserScreenshotTool(_BrowserTool):
         )
 
 
+class BrowserUploadFileTool(_BrowserTool):
+    """Attach a local file to a file input (sensitive action)."""
+
+    name = "browser_upload_file"
+    description = (
+        "Upload a local file through an <input type=file> element "
+        "(by ref or locator). This is a sensitive action: it runs "
+        "only with human approval when an approval gate requires "
+        "it, and fails with a structured error instead."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            **_TARGET_PROPERTIES,
+            "path": {"type": "string"},
+        },
+        "required": ["path"],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        return self._call(
+            self.controller.upload_file,
+            _target_from(arguments),
+            arguments["path"],
+            tab_id=arguments.get("tab_id"),
+            timeout_ms=arguments.get("timeout_ms"),
+        )
+
+
 def create_browser_tools(
     controller: BrowserController,
 ) -> list[Tool]:
@@ -655,6 +687,7 @@ def create_browser_tools(
         BrowserObservePageTool(controller),
         BrowserWaitForTool(controller),
         BrowserScreenshotTool(controller),
+        BrowserUploadFileTool(controller),
     ]
 
 
