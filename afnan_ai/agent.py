@@ -23,6 +23,7 @@ from afnan_ai import speech as _speech
 from afnan_ai.browser import BrowserController, register_browser_tools
 from afnan_ai.browser.reliability import BrowserReliability
 from afnan_ai.browser.security import ApprovalGate
+from afnan_ai.checkpointing import CheckpointManager
 from afnan_ai.config import AgentConfig
 from afnan_ai.executor import ExecutionReport, Executor
 from afnan_ai.llm import LLMProvider, get_default_provider
@@ -90,6 +91,7 @@ class AfnanAgent:
         browser_approver=None,
         security_policy=None,
         challenge_handler=None,
+        checkpoint_dir=None,
         screen_observer: ScreenObserver | None = None,
         enable_screen_tools: bool = True,
     ):
@@ -192,13 +194,29 @@ class AfnanAgent:
             else self.config.max_recovery_attempts
         )
         self.max_iterations = resolved_iterations
+        # Task checkpointing: with a checkpoint directory, task
+        # snapshots (redacted state + plan + browser session) are
+        # persisted as the task runs, so an interrupted task can
+        # resume from its last valid checkpoint (resume_task).
+        self.checkpointer: CheckpointManager | None = (
+            CheckpointManager(checkpoint_dir)
+            if checkpoint_dir
+            else None
+        )
         self.orchestrator: OrchestratorAgent = orchestrator or OrchestratorAgent(
             planner=self.planner,
             executor=self.executor,
             verifier=self.verifier,
             max_iterations=resolved_iterations,
             max_recovery_attempts=resolved_recovery,
+            checkpointer=self.checkpointer,
+            checkpoint_extra_provider=self._checkpoint_extra,
         )
+        if orchestrator is not None and self.checkpointer is not None:
+            orchestrator.checkpointer = self.checkpointer
+            orchestrator.checkpoint_extra_provider = (
+                self._checkpoint_extra
+            )
         # Recovery manager (owned by the orchestrator): replans
         # after failed/uncertain steps, attempts recorded in state
         self.recovery = self.orchestrator.recovery
@@ -414,6 +432,55 @@ class AfnanAgent:
         effective_state = state if state is not None else self.state
         result = self.orchestrator.run(
             goal, state=effective_state, max_iterations=max_iterations
+        )
+        self.state = result.state
+        return result
+
+    # -- checkpointing (crash-safe task persistence) --------------------
+
+    def _checkpoint_extra(self) -> dict:
+        """Layer extras for a checkpoint snapshot: the browser
+        session (tabs + purposes + redacted history).  Never
+        fails the task being checkpointed."""
+        try:
+            if self.browser is not None:
+                return {
+                    "browser": self.browser.session_manager.export()
+                }
+        except Exception:
+            pass
+        return {}
+
+    def save_checkpoint(self):
+        """Persist a checkpoint of the current/last task now."""
+        return self.orchestrator.save_checkpoint()
+
+    def resume_task(self, checkpoint_source) -> OrchestrationResult:
+        """Resume an interrupted task from a checkpoint.
+
+        Loads and validates the checkpoint (by path or task_id),
+        restores the checkpointed browser tabs on a best-effort
+        basis, then continues the task: steps already completed
+        before the interruption are not executed again.
+        """
+        from pathlib import Path
+
+        if self.checkpointer is not None:
+            data = self.checkpointer.load(checkpoint_source)
+        else:
+            path = Path(str(checkpoint_source)).expanduser()
+            manager = CheckpointManager(
+                path.parent if str(path.parent) else Path(".")
+            )
+            data = manager.load(path)
+        browser_data = (data.get("extra") or {}).get("browser") or {}
+        if browser_data.get("tabs") and self.browser is not None:
+            try:
+                self.browser.session_manager.restore_data(browser_data)
+            except Exception:
+                pass  # best effort; missing pages are reported there
+        result = self.orchestrator.run(
+            data["goal"], resume_from=data
         )
         self.state = result.state
         return result

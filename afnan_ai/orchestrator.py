@@ -80,7 +80,7 @@ from afnan_ai.log_config import get_logger
 from afnan_ai.planner import Planner, PlanningError, TaskPlan
 from afnan_ai.recovery import RecoveryError, RecoveryManager
 from afnan_ai.redaction import redact_arguments, redact_value
-from afnan_ai.state import AgentState, TaskStatus
+from afnan_ai.state import AgentState, StepStatus, TaskStatus
 from afnan_ai.verifier import (
     VerificationReport,
     VerificationResult,
@@ -203,6 +203,8 @@ class Agent:
         recovery: RecoveryManager | None = None,
         max_recovery_attempts: int = RecoveryManager.DEFAULT_MAX_ATTEMPTS,
         recover_on_uncertain: bool = True,
+        checkpointer: Any = None,
+        checkpoint_extra_provider: Any = None,
     ):
         if planner is None or executor is None or verifier is None:
             raise ValueError(
@@ -224,6 +226,15 @@ class Agent:
         )
         self.max_recovery_attempts = self.recovery.max_attempts
         self.recover_on_uncertain = bool(recover_on_uncertain)
+        # Checkpointing: when a checkpointer is configured, task
+        # snapshots (state + plan + iteration + provider extras
+        # such as the browser session) are persisted after planning
+        # and after every iteration, so an interrupted task can be
+        # resumed from its last valid checkpoint instead of
+        # starting over.  Checkpoint failures never fail the task.
+        self.checkpointer = checkpointer
+        self.checkpoint_extra_provider = checkpoint_extra_provider
+        self._active_checkpoint: tuple | None = None
 
     @staticmethod
     def _validate_limit(value: int) -> int:
@@ -244,6 +255,8 @@ class Agent:
         strict_verification: bool = False,
         max_recovery_attempts: int = RecoveryManager.DEFAULT_MAX_ATTEMPTS,
         recover_on_uncertain: bool = True,
+        checkpointer: Any = None,
+        checkpoint_extra_provider: Any = None,
     ) -> "Agent":
         """Build an Agent (and its Planner/Executor/Verifier) from a
         raw LLM provider + ToolRegistry — handy outside AfnanAgent."""
@@ -256,6 +269,8 @@ class Agent:
             strict_verification=strict_verification,
             max_recovery_attempts=max_recovery_attempts,
             recover_on_uncertain=recover_on_uncertain,
+            checkpointer=checkpointer,
+            checkpoint_extra_provider=checkpoint_extra_provider,
         )
 
     # -- main entry point -------------------------------------------------
@@ -265,12 +280,17 @@ class Agent:
         *,
         state: AgentState | None = None,
         max_iterations: int | None = None,
+        resume_from: dict[str, Any] | None = None,
     ) -> OrchestrationResult:
         """Run one complete task lifecycle for *goal*.
 
         Never raises for planning or step failures — they come back
         on the OrchestrationResult with a matching status.  Raises
         ValueError only for an unusable goal/limit argument.
+
+        With ``resume_from`` (a validated checkpoint dict), the
+        task's AgentState is restored and only the steps that were
+        not completed before the interruption run again.
         """
         if not goal or not str(goal).strip():
             raise ValueError("Agent.run needs a non-empty goal")
@@ -281,7 +301,10 @@ class Agent:
             else self.max_iterations
         )
 
-        task_state = self._prepare_state(goal, state)
+        if resume_from is not None:
+            task_state = AgentState.from_dict(resume_from["state"])
+        else:
+            task_state = self._prepare_state(goal, state)
         self.state = task_state
         result = OrchestrationResult(
             goal=goal,
@@ -290,6 +313,8 @@ class Agent:
             max_iterations=limit,
             started_at=_now_iso(),
         )
+        if resume_from is not None:
+            result.iterations = int(resume_from.get("iteration") or 0)
         task_state.add_observation(
             f"Agent received goal: {goal}", source="agent"
         )
@@ -299,20 +324,40 @@ class Agent:
         )
 
         # 1) Plan ------------------------------------------------------------
-        try:
-            plan = self.planner.plan(goal, state=task_state)
-        except PlanningError as e:
-            return self._finish_planning_failure(result, e)
-        except Exception as e:  # a Planner breaking its contract
-            return self._finish_planning_failure(
-                result,
-                PlanningError(f"Planner failed unexpectedly: {e}"),
+        plan: TaskPlan | None = None
+        if resume_from is not None:
+            plan, all_done = self._resume_plan(
+                resume_from, task_state, result
             )
-        if plan is None or not getattr(plan, "steps", None):
-            return self._finish_planning_failure(
-                result,
-                PlanningError("Planner returned an empty plan"),
-            )
+            if all_done:
+                result.plan = (
+                    TaskPlan.from_dict(resume_from["plan"])
+                    if resume_from.get("plan")
+                    else None
+                )
+                result.status = OrchestrationStatus.COMPLETED
+                result.finished_at = _now_iso()
+                task_state.add_observation(
+                    "Agent resumed from checkpoint: every step was "
+                    "already completed before the interruption",
+                    source="agent",
+                )
+                return result
+        if plan is None:
+            try:
+                plan = self.planner.plan(goal, state=task_state)
+            except PlanningError as e:
+                return self._finish_planning_failure(result, e)
+            except Exception as e:  # a Planner breaking its contract
+                return self._finish_planning_failure(
+                    result,
+                    PlanningError(f"Planner failed unexpectedly: {e}"),
+                )
+            if plan is None or not getattr(plan, "steps", None):
+                return self._finish_planning_failure(
+                    result,
+                    PlanningError("Planner returned an empty plan"),
+                )
 
         result.plan = plan
         task_state.metadata["plan"] = _redacted_plan_dict(plan)
@@ -321,6 +366,7 @@ class Agent:
             f"{len(plan.steps)} step(s) for goal: {goal}",
             source="agent",
         )
+        self._save_checkpoint(task_state, plan, result)
 
         # 2) Execute → verify, one step at a time, with recovery ------
         # When a step fails (or cannot be verified), the Recovery
@@ -416,6 +462,7 @@ class Agent:
                 ),
                 source="agent",
             )
+            self._save_checkpoint(task_state, current_plan, result)
 
             # Does this step need recovery?
             trigger: str | None = None
@@ -578,11 +625,103 @@ class Agent:
             logger.info("task %s", result.summary())
         else:
             logger.warning("task %s", result.summary())
+        self._save_checkpoint(task_state, plan, result)
         return result
 
     # Alias in the vocabulary used by the agent layer
     run_task = run
     execute_goal = run
+
+    # -- checkpointing -------------------------------------------------
+
+    def _resume_plan(
+        self,
+        checkpoint: dict[str, Any],
+        task_state: AgentState,
+        result: OrchestrationResult,
+    ) -> tuple[TaskPlan | None, bool]:
+        """The not-yet-completed remainder of a checkpointed plan.
+
+        Returns ``(plan, False)`` with the steps still to run, or
+        ``(None, True)`` when everything already finished.  A
+        checkpoint without a plan falls back to ``(None, False)``
+        so the caller replans against the restored state.
+        """
+        if not checkpoint.get("plan"):
+            return None, False
+        full_plan = TaskPlan.from_dict(checkpoint["plan"])
+        completed_ids = {
+            record.name for record in task_state.completed_steps
+        }
+        remaining = [
+            step
+            for step in full_plan.steps
+            if step.step_id not in completed_ids
+        ]
+        task_state.add_observation(
+            f"Agent resumed task from checkpoint at iteration "
+            f"{result.iterations}: {len(remaining)} of "
+            f"{len(full_plan.steps)} step(s) remaining",
+            source="agent",
+        )
+        if not remaining:
+            return None, True
+        return (
+            TaskPlan(
+                goal=full_plan.goal,
+                steps=remaining,
+                plan_id=full_plan.plan_id,
+                task_id=full_plan.task_id,
+                created_at=full_plan.created_at,
+                metadata=dict(full_plan.metadata),
+            ),
+            False,
+        )
+
+    def _save_checkpoint(
+        self,
+        task_state: AgentState,
+        plan: TaskPlan | None,
+        result: OrchestrationResult,
+    ):
+        """Persist a task checkpoint (never fails the task)."""
+        self._active_checkpoint = (task_state, plan, result)
+        if self.checkpointer is None:
+            return None
+        try:
+            extra: dict[str, Any] = {}
+            if self.checkpoint_extra_provider is not None:
+                extra = self.checkpoint_extra_provider() or {}
+            return self.checkpointer.save_snapshot(
+                state=task_state,
+                plan=plan,
+                goal=result.goal,
+                status=task_state.status.value,
+                iteration=result.iterations,
+                extra=extra,
+            )
+        except Exception as exc:  # checkpointing must not kill tasks
+            logger.warning(
+                "checkpoint save failed for task %s: %s",
+                task_state.task_id,
+                exc,
+            )
+            return None
+
+    def save_checkpoint(self):
+        """Checkpoint the current (or last) task right now.
+
+        Returns the checkpoint path.  Raises ValueError when no
+        checkpointer is configured or no task has run yet.
+        """
+        if self.checkpointer is None:
+            raise ValueError(
+                "No checkpointer configured for this Agent"
+            )
+        if self._active_checkpoint is None:
+            raise ValueError("No task has run yet to checkpoint")
+        task_state, plan, result = self._active_checkpoint
+        return self._save_checkpoint(task_state, plan, result)
 
     # -- helpers ---------------------------------------------------------
     def _prepare_state(
