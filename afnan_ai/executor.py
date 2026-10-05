@@ -45,6 +45,27 @@ from typing import Any
 
 from afnan_ai.planner import PlanStep, TaskPlan
 from afnan_ai.redaction import redact_arguments
+
+#: Tool outputs may report a ``sensitivity`` block (the browser
+#: approval layer does).  When its category is credential or
+#: payment material, the typed values are secrets: they are
+#: masked in every recorded copy of the step's arguments (the
+#: execution already used the real values; only records are
+#: scrubbed).  A generic convention — any tool may report it.
+_SENSITIVE_CATEGORIES = frozenset({"credential_input", "payment_input"})
+_SENSITIVE_ARGUMENT_KEYS = ("text", "value")
+
+
+def sensitive_argument_keys(output: Any) -> tuple[str, ...]:
+    """Argument keys to mask for a tool output, or ()."""
+    if not isinstance(output, dict):
+        return ()
+    sensitivity = output.get("sensitivity")
+    if not isinstance(sensitivity, dict):
+        return ()
+    if sensitivity.get("category") not in _SENSITIVE_CATEGORIES:
+        return ()
+    return _SENSITIVE_ARGUMENT_KEYS
 from afnan_ai.state import AgentState, TaskStatus
 from afnan_ai.tools.base import (
     ToolError,
@@ -440,6 +461,7 @@ class Executor:
             )
             self._record_observation(state, step, tool_result.output)
             state.complete_step(step.step_id, result=tool_result.output)
+            self._scrub_arguments(result, state, tool_result.output)
             return result
 
         error = tool_result.error or ToolError(
@@ -448,6 +470,33 @@ class Executor:
             tool=step.tool_name,
         )
         return self._record_failure(result, state, error)
+
+    @staticmethod
+    def _scrub_arguments(
+        result: StepExecutionResult,
+        state: AgentState,
+        output: Any,
+    ) -> None:
+        """Mask credential/payment values in recorded arguments.
+
+        Driven by the tool output's own ``sensitivity`` report;
+        the step record in AgentState and this execution result
+        keep the step's shape, never the secret value.
+        """
+        keys = sensitive_argument_keys(output)
+        if not keys:
+            return
+        for key in keys:
+            if key in result.arguments:
+                result.arguments[key] = "***"
+        for record in (*state.completed_steps, *state.failed_steps):
+            if record.name != result.step_id:
+                continue
+            recorded = record.metadata.get("arguments")
+            if isinstance(recorded, dict):
+                for key in keys:
+                    if key in recorded:
+                        recorded[key] = "***"
 
     @staticmethod
     def _record_observation(

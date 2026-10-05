@@ -54,6 +54,7 @@ stays exactly as it was.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -75,9 +76,10 @@ from afnan_ai.executor import (
     ExecutionReport,
     Executor,
     StepExecutionResult,
+    sensitive_argument_keys,
 )
 from afnan_ai.log_config import get_logger
-from afnan_ai.planner import Planner, PlanningError, TaskPlan
+from afnan_ai.planner import PlanStep, Planner, PlanningError, TaskPlan
 from afnan_ai.recovery import RecoveryError, RecoveryManager
 from afnan_ai.redaction import redact_arguments, redact_value
 from afnan_ai.state import AgentState, StepStatus, TaskStatus
@@ -205,6 +207,7 @@ class Agent:
         recover_on_uncertain: bool = True,
         checkpointer: Any = None,
         checkpoint_extra_provider: Any = None,
+        max_duration_s: float | None = None,
     ):
         if planner is None or executor is None or verifier is None:
             raise ValueError(
@@ -235,6 +238,9 @@ class Agent:
         self.checkpointer = checkpointer
         self.checkpoint_extra_provider = checkpoint_extra_provider
         self._active_checkpoint: tuple | None = None
+        # Optional wall-clock budget for a whole run (seconds);
+        # None means steps/iterations alone bound the task.
+        self.max_duration_s = self._validate_duration(max_duration_s)
 
     @staticmethod
     def _validate_limit(value: int) -> int:
@@ -243,6 +249,21 @@ class Agent:
                 f"max_iterations must be a positive integer, got {value!r}"
             )
         return value
+
+    @staticmethod
+    def _validate_duration(value: float | None) -> float | None:
+        if value is None:
+            return None
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or value <= 0
+        ):
+            raise ValueError(
+                "max_duration_s must be a positive number of "
+                f"seconds, got {value!r}"
+            )
+        return float(value)
 
     @classmethod
     def from_components(
@@ -257,6 +278,7 @@ class Agent:
         recover_on_uncertain: bool = True,
         checkpointer: Any = None,
         checkpoint_extra_provider: Any = None,
+        max_duration_s: float | None = None,
     ) -> "Agent":
         """Build an Agent (and its Planner/Executor/Verifier) from a
         raw LLM provider + ToolRegistry — handy outside AfnanAgent."""
@@ -271,6 +293,7 @@ class Agent:
             recover_on_uncertain=recover_on_uncertain,
             checkpointer=checkpointer,
             checkpoint_extra_provider=checkpoint_extra_provider,
+            max_duration_s=max_duration_s,
         )
 
     # -- main entry point -------------------------------------------------
@@ -281,6 +304,7 @@ class Agent:
         state: AgentState | None = None,
         max_iterations: int | None = None,
         resume_from: dict[str, Any] | None = None,
+        max_duration_s: float | None = None,
     ) -> OrchestrationResult:
         """Run one complete task lifecycle for *goal*.
 
@@ -300,6 +324,12 @@ class Agent:
             if max_iterations is not None
             else self.max_iterations
         )
+        duration_budget = (
+            self._validate_duration(max_duration_s)
+            if max_duration_s is not None
+            else self.max_duration_s
+        )
+        started_mono = time.monotonic()
 
         if resume_from is not None:
             task_state = AgentState.from_dict(resume_from["state"])
@@ -403,6 +433,26 @@ class Agent:
                 }
                 remaining = list(current_plan.steps[step_index:])
                 break
+            if duration_budget is not None and (
+                time.monotonic() - started_mono
+            ) > duration_budget:
+                outcome = OrchestrationStatus.MAX_ITERATIONS_EXCEEDED
+                failure_error = {
+                    "code": "time_limit_exceeded",
+                    "message": (
+                        f"Time limit ({duration_budget:g}s) "
+                        f"reached; step {step.step_id!r} and the "
+                        f"remaining "
+                        f"{len(current_plan.steps) - step_index} "
+                        "step(s) were not executed"
+                    ),
+                    "details": {
+                        "max_duration_s": duration_budget,
+                        "next_step": step.step_id,
+                    },
+                }
+                remaining = list(current_plan.steps[step_index:])
+                break
 
             result.iterations += 1
             try:
@@ -439,6 +489,28 @@ class Agent:
                 task_state.fail_step(step.step_id, str(e))
 
             executed.append(execution_result)
+            # If the step touched credential/payment material,
+            # the typed values are secrets: mask them in the
+            # stored plan records too (the Executor already
+            # scrubbed the step record itself).
+            scrub_keys = sensitive_argument_keys(
+                execution_result.output
+            )
+            if scrub_keys:
+                for record_key in ("plan", "current_plan"):
+                    stored = task_state.metadata.get(record_key)
+                    if not isinstance(stored, dict):
+                        continue
+                    for step_dict in stored.get("steps", []):
+                        if not isinstance(step_dict, dict):
+                            continue
+                        if step_dict.get("step_id") != step.step_id:
+                            continue
+                        stored_args = step_dict.get("arguments")
+                        if isinstance(stored_args, dict):
+                            for key in scrub_keys:
+                                if key in stored_args:
+                                    stored_args[key] = "***"
 
             verification_result = self._verify(step, execution_result, task_state)
             if verification_result is not None:
@@ -519,11 +591,25 @@ class Agent:
                 and recovery_attempts_used < self.recovery.max_attempts
             ):
                 recovery_attempts_used += 1
+                recovery_step = step
+                if scrub_keys:
+                    # never hand a typed secret to the replanner
+                    masked = dict(step.arguments)
+                    for key in scrub_keys:
+                        if key in masked:
+                            masked[key] = "***"
+                    recovery_step = PlanStep(
+                        step_id=step.step_id,
+                        description=step.description,
+                        tool_name=step.tool_name,
+                        arguments=masked,
+                        expected_result=step.expected_result,
+                    )
                 try:
                     new_plan = self.recovery.plan_recovery(
                         goal=goal,
                         state=task_state,
-                        failed_step=step,
+                        failed_step=recovery_step,
                         reason=reason,
                         trigger=trigger,
                         attempt=recovery_attempts_used,
