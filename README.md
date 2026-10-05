@@ -1525,6 +1525,91 @@ agent's registry is authorized through the center:
       ↓ AuditLogger
       ↓ Memory / Goal / Artifact Update
 
+### Authorization & Capability System
+
+The center was extended into a full centralized
+authorization layer:
+
+- **Capability catalog** (`capabilities.py`) — every
+  executable capability is explicitly defined
+  (`browser.read`, `filesystem.delete`,
+  `connector.email.send`, …): id, name, description,
+  category, risk, operations, approval requirement,
+  resources.  Nothing is implied; unknown ids raise.
+- **Owner profiles** (`profiles.py`) — Restricted /
+  Standard / Advanced / Fully Authorized grant tables
+  (monotone: restricted ⊆ standard ⊆ advanced ⊆
+  fully_authorized).  Fully Authorized changes *which*
+  capabilities are granted — never whether the policy
+  engine runs: destructive-action policy, audit, vault
+  protection, sandboxing and the emergency stop stay on
+  in every profile.
+- **Resource policies** (`resources.py`) — filesystem
+  roots, browser allow/block domains, connector
+  account scopes, computer app allowlists.  Explicitly
+  configured scopes are enforced; traversal and
+  blocklist-overrides-allowlist are handled.
+- **Policy versions** (`versioning.py`) — every profile
+  change or grant publishes a version; every decision
+  and audit record carries the deciding version.
+- **Dry-run simulator** (`simulator.py`) — side-effect
+  free policy simulation: decision, risk, required
+  capability, approval requirement, expected side
+  effects — no audit, no approval callbacks, no rate
+  mutation, no execution.
+- **Temporary grants** (`temporary.py`) — scoped,
+  expiring capability grants (path/url/account
+  prefixes); expiry is enforced at decision time.
+- **Trust boundaries** (`trust.py`) — nine boundaries;
+  only `system` and `authorized_user` may instruct.
+  Web/email/document/connector content is labeled
+  data and screened for instruction-shaped text.
+- **Central redactor** (`redactor.py`) — one redaction
+  authority for logs, errors, tool results,
+  trajectories, audit, screenshots and LLM context.
+- **Credential leases** (`vault.py`) — single-use,
+  expiring operation tokens; the raw value never leaves
+  the vault and redemption is audited.
+- **Emergency stop** (`emergency.py`) — one kill switch
+  halting the loop, background tasks, subagents,
+  connectors, browser and computer work.  Trips are
+  idempotent, halt callbacks always run, reset needs
+  explicit owner authorization, and the agent never
+  auto-resumes.
+- **Escalation** (`escalation.py`) — the only path to a
+  missing capability: a human-readable denial
+  explanation plus an explicit temporary-grant request.
+  No bypass flags, no hidden admin paths.
+- **Execution sandbox** (`sandbox_exec.py`) — isolated
+  subprocess with timeouts, output caps, env
+  scrubbing and (where available) filesystem jailing.
+
+Wiring: `ToolRegistry.execute` authorizes every call
+(`PERMISSION_DENIED` / `APPROVAL_REQUIRED`); the
+`AgentLoop` refuses to start or continue while the
+emergency stop is tripped; background tasks snapshot
+capabilities + policy version and revalidate after
+restarts; subagent creation is least-privilege
+(child ∩ parent) and refused under emergency stop;
+skills pass a security review before registration;
+connectors, the browser runtime and the computer
+controller all halt on emergency stop.
+
+    User Goal
+      ↓ AgentLoop
+      ↓ Decision
+      ↓ Security Policy Engine
+      ├── Permission Check (capability-based)
+      ├── Risk Classification
+      ├── Credential Policy
+      ├── Prompt-Injection Defense
+      ├── Rate / Resource Limits
+      └── Human Approval
+      ↓ Tool / Browser / Computer / Connector / Skill
+      ↓ Verifier
+      ↓ AuditLogger
+      ↓ Memory / Goal / Artifact Update
+
 - **PermissionManager** — capability-based (`browser.read`,
   `email.send`), not role-based, for user / agent /
   subagent / tool / skill / connector actors.  Least
