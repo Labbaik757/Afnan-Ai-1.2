@@ -31,6 +31,11 @@ Afnan AI is a personal voice assistant built with Python and powered by Ollama. 
 
 # 🎙️ Available Voice Commands
 
+> **Urdu-first:** Afnan ab Urdu mein sunta aur bolta hai.
+> Speech recognition `ur-PK` pe hoti hai aur jawab Urdu
+> neural voice mein aata hai. English text pe purana
+> system-engine behaviour rehta hai.
+
 | Voice Command | Action |
 |---------------|--------|
 | Afnan | Activate the assistant |
@@ -1923,8 +1928,55 @@ Tool architecture (35 browser tools total):
 Phase 1 (the core agent architecture) is complete and verified
 end to end:
 
-# 🗂️ Secure Agent Workspace & Persistent Runtime
+# 🗣️ Urdu Voice Pipeline & On-Device Wake Word
 
+**Sunta Urdu mein, bolta Urdu mein.**
+
+- **Speech recognition** — `AgentConfig.stt_language`
+  (default `ur-PK`, env `AFNAN_STT_LANGUAGE`). Google
+  recognition ab Urdu mein sunti hai; `en-IN` pe wapas
+  jana ek env var ki baat hai.
+- **Speech (TTS)** — `afnan_ai/speech.py` ab Urdu text
+  pehchanti hai (Arabic script) aur Urdu chain chalati
+  hai: **edge-tts** neural Urdu voices (default
+  `ur-PK-GulNawazNeural`, env `AFNAN_TTS_URDU_VOICE`,
+  koi account nahi) → **gTTS** (`lang='ur'`) →
+  pyttsx3 → platform adapter. English text pe purana
+  behaviour. Har backend lazy optional hai; kuch na
+  mile toh text print hota hai, crash nahi.
+- **Privacy note** — continuous mic sirf wake word ke
+  baad cloud ko audio bhejta hai. On-device wake word
+  lagne ke baad room audio Google ko jana band.
+
+**On-device wake word** (`afnan_ai/wakeword.py`):
+
+- `WakeWordDetector` interface (LLMProvider jaisa
+  pattern), `OpenWakeWordDetector` (Apache-2.0, offline),
+  `FakeWakeWordDetector` (tests), `create_detector()`
+  factory — model ya library na ho toh automatic
+  fallback purane cloud loop pe.
+- `agent.start()` mic se 80 ms PCM frames stream karke
+  local score check karta hai; threshold
+  `AFNAN_WAKEWORD_THRESHOLD` (default 0.5).
+- **Apna "Afnan" model train karna** (one-time):
+  1. `pip install openwakeword`
+  2. openWakeWord repo ka `notebooks/automatic_model_training.ipynb`
+     Colab mein kholo (free T4, ~30–60 min)
+  3. Target word `afnan` rakho aur **apni 20–30
+     recordings** add karo — Urdu accent ke liye ye
+     lazmi hai, warna English TTS wali awaz tumhari
+     awaz se match nahi karegi
+  4. `afnan.onnx` download karke `AFNAN_WAKEWORD_MODEL`
+     env var mein path do
+- Status check: `detector_status(model_path)` batata hai
+  ke on-device path ready hai ya fallback chal raha hai.
+
+Tests: `tests/test_voice_urdu.py` (26 tests: detector
+interface, Urdu detection, TTS fallback chain, config,
+agent wiring — fake detector se prove hota hai ke local
+path pe Google call nahi hoti).
+
+# 🗂️ Secure Agent Workspace & Persistent Runtime
 Every long-running task runs inside a **SecureWorkspace** —
 an isolated, persistent, policy-controlled execution
 environment that binds Browser, Computer Control, Files,
