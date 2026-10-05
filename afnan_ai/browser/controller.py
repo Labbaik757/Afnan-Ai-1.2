@@ -808,6 +808,241 @@ class BrowserController:
             "page": self.current_page(tab.tab_id),
         }
 
+    # -- computer-use actions (coordinates + element state) -----------------
+    # These serve the perception layer: coordinate input is the
+    # visual fallback when no DOM/accessibility target exists,
+    # and goes through the same challenge guard as every other
+    # interaction.  Targets are still validated first — a
+    # coordinate action never runs on an unobserved page.
+    def element_box(
+        self,
+        target: dict[str, Any] | None = None,
+        *,
+        tab_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Bounding box of a validated target element (or None)."""
+        tab, record, info = self._prepare_interaction(tab_id, target)
+        try:
+            return self.runtime.element_box(
+                tab.handle, record["handle"]
+            )
+        except BrowserException:
+            return None
+
+    def click_at(
+        self,
+        x: float,
+        y: float,
+        *,
+        tab_id: str | None = None,
+        click_count: int = 1,
+    ) -> dict[str, Any]:
+        """Click at page coordinates (visual-fallback action)."""
+        tab = self._resolve_tab(tab_id)
+        self._challenge_check(tab)
+        self._ratelimit_check(tab)
+        if x < 0 or y < 0:
+            raise BrowserException(
+                "Click coordinates must not be negative",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"x": x, "y": y},
+            )
+        self._do(
+            lambda: self.runtime.mouse_click(
+                tab.handle, float(x), float(y), int(click_count)
+            ),
+            "click at coordinates",
+            {"ref": None},
+        )
+        return {
+            "action": "click_at",
+            "x": float(x),
+            "y": float(y),
+            "click_count": int(click_count),
+            "page": self.current_page(tab.tab_id),
+        }
+
+    def double_click(
+        self,
+        target: dict[str, Any] | None = None,
+        *,
+        tab_id: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Double-click a validated element (via its box center)."""
+        tab, record, info = self._prepare_interaction(tab_id, target)
+        self._require_usable(info, "double-click")
+        self._challenge_check(tab)
+        self._ratelimit_check(tab)
+        sensitivity = self._gate_check(
+            "browser_click", tab, info
+        )
+        box = self.element_box(target, tab_id=tab_id)
+        if not box:
+            raise BrowserException(
+                f"Element {info.ref} has no bounding box to "
+                "double-click",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"ref": info.ref},
+            )
+        cx = box["x"] + box["width"] / 2
+        cy = box["y"] + box["height"] / 2
+        self._do(
+            lambda: self.runtime.mouse_click(
+                tab.handle, cx, cy, 2
+            ),
+            "double-click",
+            record,
+        )
+        result = self._interaction_result(tab, "double_click", info)
+        if sensitivity:
+            result["sensitivity"] = sensitivity
+        return result
+
+    def mouse_move(
+        self,
+        x: float,
+        y: float,
+        *,
+        tab_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Move the mouse to page coordinates."""
+        tab = self._resolve_tab(tab_id)
+        self._do(
+            lambda: self.runtime.mouse_move(
+                tab.handle, float(x), float(y)
+            ),
+            "move mouse",
+            {"ref": None},
+        )
+        return {
+            "action": "mouse_move",
+            "x": float(x),
+            "y": float(y),
+            "page": self.current_page(tab.tab_id),
+        }
+
+    def drag(
+        self,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        *,
+        tab_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Drag from one page coordinate to another."""
+        tab = self._resolve_tab(tab_id)
+        self._challenge_check(tab)
+        self._do(
+            lambda: self.runtime.mouse_drag(
+                tab.handle, float(x1), float(y1),
+                float(x2), float(y2),
+            ),
+            "drag",
+            {"ref": None},
+        )
+        return {
+            "action": "drag",
+            "from": {"x": float(x1), "y": float(y1)},
+            "to": {"x": float(x2), "y": float(y2)},
+            "page": self.current_page(tab.tab_id),
+        }
+
+    def hover(
+        self,
+        target: dict[str, Any] | None = None,
+        *,
+        tab_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Hover over a validated element (its box center)."""
+        tab, record, info = self._prepare_interaction(tab_id, target)
+        box = self.element_box(target, tab_id=tab_id)
+        if not box:
+            raise BrowserException(
+                f"Element {info.ref} has no bounding box to hover",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"ref": info.ref},
+            )
+        cx = box["x"] + box["width"] / 2
+        cy = box["y"] + box["height"] / 2
+        self._do(
+            lambda: self.runtime.mouse_move(tab.handle, cx, cy),
+            "hover",
+            record,
+        )
+        return {
+            "action": "hover",
+            "element": info.to_dict(),
+            "page": self.current_page(tab.tab_id),
+        }
+
+    def focus_element(
+        self,
+        target: dict[str, Any] | None = None,
+        *,
+        tab_id: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Move keyboard focus to a validated element."""
+        tab, record, info = self._prepare_interaction(tab_id, target)
+        self._do(
+            lambda: self.runtime.focus_element(
+                tab.handle, record["handle"],
+                self._timeout(timeout_ms),
+            ),
+            "focus",
+            record,
+        )
+        return {
+            "action": "focus",
+            "element": info.to_dict(),
+            "page": self.current_page(tab.tab_id),
+        }
+
+    def set_checked(
+        self,
+        target: dict[str, Any] | None,
+        checked: bool,
+        *,
+        tab_id: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Check or uncheck a checkbox/radio element."""
+        tab, record, info = self._prepare_interaction(tab_id, target)
+        self._require_usable(info, "check")
+        self._challenge_check(tab)
+        self._ratelimit_check(tab)
+        element_type = str(
+            info.attributes.get("type", "")
+        ).lower()
+        if info.tag != "input" or element_type not in (
+            "checkbox", "radio",
+        ):
+            raise BrowserException(
+                f"Element {info.ref} (<{info.tag}> "
+                f"type={element_type!r}) is not a checkbox or "
+                "radio input",
+                code=BrowserErrorCode.INVALID_ELEMENT,
+                details={"ref": info.ref},
+            )
+        sensitivity = self._gate_check(
+            "browser_click", tab, info
+        )
+        self._do(
+            lambda: self.runtime.set_checked(
+                tab.handle, record["handle"], bool(checked),
+                self._timeout(timeout_ms),
+            ),
+            "set checked state of",
+            record,
+        )
+        result = self._interaction_result(tab, "set_checked", info)
+        result["checked"] = bool(checked)
+        if sensitivity:
+            result["sensitivity"] = sensitivity
+        return result
+
     # -- page observation ---------------------------------------------------
     def observe(
         self,
