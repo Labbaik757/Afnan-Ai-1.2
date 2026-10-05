@@ -25,11 +25,14 @@ from tests.test_browser_controller import FakeBrowserBackend
 EXPECTED_TOOLS = [
     "browser_accessibility_tree",
     "browser_back",
+    "browser_check_challenge",
     "browser_clear",
     "browser_click",
     "browser_close_tab",
+    "browser_collect_items",
     "browser_connect",
     "browser_current_page",
+    "browser_downloads",
     "browser_extract_content",
     "browser_find_elements",
     "browser_find_semantic",
@@ -48,11 +51,13 @@ EXPECTED_TOOLS = [
     "browser_search",
     "browser_select_option",
     "browser_select_tab",
+    "browser_session",
     "browser_set_tab_purpose",
     "browser_shutdown",
     "browser_type",
     "browser_upload_file",
     "browser_wait_for",
+    "browser_wait_for_stable",
 ]
 
 

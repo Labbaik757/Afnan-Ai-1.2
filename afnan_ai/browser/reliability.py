@@ -38,6 +38,14 @@ logger = get_logger(__name__)
 
 # failure kind -> (strategy name, guidance for the replanner)
 _STRATEGIES: dict[str, tuple[str, str]] = {
+    "human_required": (
+        "human_intervention",
+        "A human check (CAPTCHA / verification) is blocking the "
+        "page. Do not retry, solve or work around the challenge — "
+        "the task is paused for human intervention "
+        "(human_required); stop and let the user complete the "
+        "check manually.",
+    ),
     "element_not_found": (
         "relocate_from_observation",
         "The target element was not found on the page. Re-observe "
@@ -93,6 +101,8 @@ _STRATEGIES: dict[str, tuple[str, str]] = {
 
 def _classify_failure(reason: str, evidence: dict[str, Any]) -> str:
     text = f"{reason} {evidence.get('error') or ''}".lower()
+    if "human_required" in text or "human check" in text:
+        return "human_required"
     if "no element matches" in text or "element_not_found" in text:
         return "element_not_found"
     if "timed out" in text or "timeout" in text:
@@ -139,6 +149,13 @@ class BrowserReliability:
         "browser_current_page",
         "browser_find_elements",
         "browser_inspect_element",
+        # state/manager tools: verified by their own structured
+        # output, not by page state
+        "browser_wait_for_stable",
+        "browser_collect_items",
+        "browser_check_challenge",
+        "browser_downloads",
+        "browser_session",
     })
 
     def observe_state(self, step: Any = None) -> dict[str, Any] | None:

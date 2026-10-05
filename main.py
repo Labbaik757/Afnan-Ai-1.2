@@ -178,6 +178,18 @@ def get_web_research():
     return getattr(_agent.browser, "research_session", None)
 
 
+def get_download_manager():
+    """Return the browser DownloadManager (download tracking,
+    integrity verification, unsafe-payload flags)."""
+    return _agent.browser.download_manager
+
+
+def get_session_manager():
+    """Return the browser SessionManager (navigation history and
+    save/load/restore of task browsing sessions)."""
+    return _agent.browser.session_manager
+
+
 def get_approval_gate():
     """Return the browser ApprovalGate (sensitive-action policy
     plus recorded approval decisions)."""
