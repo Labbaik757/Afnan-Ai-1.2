@@ -102,6 +102,7 @@ class TabInfo:
     url: str = ""
     title: str = ""
     active: bool = False
+    purpose: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -109,6 +110,7 @@ class TabInfo:
             "url": self.url,
             "title": self.title,
             "active": bool(self.active),
+            "purpose": self.purpose,
         }
 
 

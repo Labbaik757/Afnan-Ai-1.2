@@ -50,7 +50,7 @@ _JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*)?"
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _KV_SECRET_RE = re.compile(
     r"(?i)\b(password|passwd|pwd|token|secret|api[_-]?key|session|cookie)"
-    r"(\s*[:=]\s*)(\S+)"
+    r"[a-z0-9_-]*(\s*[:=]\s*)(\S+)"
 )
 _MAX_DEPTH = 8
 

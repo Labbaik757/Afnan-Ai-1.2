@@ -27,6 +27,7 @@ from afnan_ai.browser.base import (
 )
 from afnan_ai.browser.controller import BrowserController
 from afnan_ai.browser.reliability import BrowserReliability
+from afnan_ai.browser.research import WebResearch
 from afnan_ai.browser.security import (
     ActionRisk,
     ApprovalDecision,
@@ -56,6 +57,7 @@ __all__ = [
     "SecurityPolicy",
     "Sensitivity",
     "TabInfo",
+    "WebResearch",
     "classify_action",
     "create_browser_tools",
     "register_browser_tools",
