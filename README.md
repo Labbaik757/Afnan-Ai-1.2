@@ -619,11 +619,13 @@ works the same on Windows, macOS and Linux:
   and shut down.  Navigating with no tab open creates one.
 - **`BrowserBackend`** is the driver boundary (now the
   `BrowserEngineAdapter` interface — see the Runtime section
-  below).  The shipped `PlaywrightAdapter` drives
-  Chromium/Chrome/Edge/Firefox/WebKit via Playwright (lazily
-  imported — installing nothing is fine until a browser
-  actually launches).  Tests and other hosts can inject any
-  adapter without touching controller or agent code.
+  below).  The default `ChromiumAdapter` drives a real
+  Chromium-family browser over the Chrome DevTools Protocol
+  (standard library only); `PlaywrightAdapter` remains as the
+  fallback/development adapter (lazily imported — installing
+  nothing is fine until a browser actually launches).  Tests
+  and other hosts can inject any adapter without touching
+  controller or agent code.
 - **Tools** — every operation is a registry Tool (`browser_launch`,
   `browser_connect`, `browser_new_tab`, `browser_list_tabs`,
   `browser_select_tab`, `browser_close_tab`, `browser_navigate`,
@@ -737,8 +739,36 @@ layering is:
 ```
 Afnan Agent → Browser Tools → BrowserController
     → AfnanBrowserRuntime → BrowserEngineAdapter
-    → PlaywrightAdapter → Chromium
+    → ChromiumAdapter → Chromium            (current)
+    → PlaywrightAdapter → Chromium          (fallback / development)
+    → Native Afnan Chromium Adapter         (future)
+        → Customized Afnan Browser
 ```
+
+- **`ChromiumAdapter`** (`afnan_ai/browser/chromium_adapter.py`)
+  is the current engine: it launches a Chromium-family browser
+  (Chromium, Chrome or Edge — set `AFNAN_CHROMIUM_EXECUTABLE`
+  to choose the binary) and drives it over the Chrome DevTools
+  Protocol using only the Python standard library.  Each Afnan
+  profile is its own Chromium process with its own
+  user-data directory, so profiles (persistent or isolated)
+  never share cookies/storage; tabs, navigation, screenshots,
+  element interaction and page observation all flow through
+  CDP, with accessibility from the modern CDP Accessibility
+  domain (the same normalized tree the Playwright adapter
+  produces from `aria_snapshot()`).  The debug port binds to
+  127.0.0.1 only, and profile data is never read back into
+  AgentState, logs or screenshots.
+- **`PlaywrightAdapter`** (`afnan_ai/browser/backend.py`) is
+  preserved as the fallback/development adapter
+  (`BrowserBackend`/`PlaywrightBackend` remain as compatibility
+  aliases).  Both adapters return identical normalized results
+  — `tests/test_chromium_adapter.py` runs the same controller
+  workflow through both and through a fake adapter and compares
+  the observations.  Swapping engines (including the future
+  native Afnan Chromium build) means implementing
+  `BrowserEngineAdapter` once; runtime, controller, tools,
+  Planner, Executor, Verifier and Recovery stay untouched.
 
 - **`AfnanBrowserRuntime`** (`afnan_ai/browser/runtime.py`) is
   the actual owner of browser state: lifecycle
@@ -765,13 +795,17 @@ Afnan Agent → Browser Tools → BrowserController
   control.
 - **`BrowserEngineAdapter`** (`afnan_ai/browser/engine.py`) is
   the only interface an engine implements; handles stay opaque
-  and no engine types cross it.  **`PlaywrightAdapter`**
-  (`backend.py`) is the shipped implementation (Chromium via
-  Playwright, persistent profile contexts included);
-  `BrowserBackend`/`PlaywrightBackend` remain as compatibility
-  aliases.  A future `AfnanChromiumAdapter` only has to
-  implement this interface — runtime, controller, tools,
-  Planner, Executor, Verifier and Recovery stay untouched.
+  and no engine types cross it.  **`ChromiumAdapter`** is the
+  default implementation (real Chromium via CDP);
+  **`PlaywrightAdapter`** (`backend.py`) is the fallback
+  (Chromium via Playwright, persistent profile contexts
+  included); `BrowserBackend`/`PlaywrightBackend` remain as
+  compatibility aliases.  The runtime also exposes runtime
+  health (`runtime.health()` — engine alive, session valid,
+  active tab, page responsive), tab↔task association and a
+  permission extension point (`check_permission` with
+  normal/sensitive/destructive/approval_required levels; human
+  approval itself stays with the controller's ApprovalGate).
 - **Models** (`afnan_ai/browser/models.py`) — `BrowserSession`,
   `BrowserProfile`, `BrowserTab`, `BrowserWindow`,
   `BrowserPage`, `BrowserObservation`, `BrowserElement`,
@@ -790,7 +824,13 @@ Tests: `tests/test_browser_runtime.py` drives a purpose-built
 `FakeBrowserAdapter` (startup, tabs, navigation, events,
 profiles, sessions, crash recovery, serialization, controller
 and AgentState integration) with no real browser launched
-(41 browser tools total).
+(41 browser tools total).  `tests/test_chromium_adapter.py`
+covers the ChromiumAdapter against a fake CDP connection,
+runs real-Chromium integration tests (launch, navigation,
+tabs, screenshots, profile persistence, restart, crash
+recovery) when a Chromium binary is installed, and compares
+the normalized controller output of the Chromium, Playwright
+and fake adapters.
 
 ## Autonomous browser workflow
 

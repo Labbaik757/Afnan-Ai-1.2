@@ -310,6 +310,42 @@ def main() -> int:
     else:
         print("OK: browser driver code isolated in afnan_ai/browser")
 
+    # ---- Engine isolation: adapters only ------------------------------
+    # Playwright may be imported solely by its own adapter; engine
+    # types (ChromiumAdapter, CDP) must never leak into the core
+    # agent, planner, executor, verifier, controller or tools.
+    engine_offenders = []
+    core_engine_offenders = []
+    for py_file in (ROOT / "afnan_ai").rglob("*.py"):
+        source = py_file.read_text(encoding="utf-8")
+        relative = str(py_file.relative_to(ROOT))
+        if ("import playwright" in source or "from playwright" in source) \
+                and py_file.name != "backend.py":
+            engine_offenders.append(relative)
+        if py_file.name in (
+            "agent.py", "planner.py", "executor.py", "verifier.py",
+            "orchestrator.py", "recovery.py",
+            "controller.py", "tools.py",
+        ) and (
+            "ChromiumAdapter" in source
+            or "chrome devtools" in source.lower()
+            or "devtools protocol" in source.lower()
+        ):
+            core_engine_offenders.append(relative)
+    if engine_offenders or core_engine_offenders:
+        failures.append(
+            f"engine leakage: {engine_offenders + core_engine_offenders}"
+        )
+        print(
+            "FAIL: engine code leaked outside adapters:"
+            f" {engine_offenders + core_engine_offenders}"
+        )
+    else:
+        print(
+            "OK: engines isolated behind BrowserEngineAdapter"
+            " (ChromiumAdapter via CDP, PlaywrightAdapter fallback)"
+        )
+
     for path in sorted(ROOT.rglob("*.py")):
         if ".git" in path.parts or "__pycache__" in path.parts:
             continue
