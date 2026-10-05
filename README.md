@@ -1233,6 +1233,76 @@ orchestration layer:
   included).  Tests: `tests/test_context_reasoning.py`
   (29 tests).
 
+## Dynamic Tool & Skill Builder
+
+`afnan_ai/skills/` lets the Agent turn required capabilities
+into reusable skills — composed from existing tools, never
+from arbitrary model-generated code:
+
+    User Goal
+      ↓ Capability/Skill Discovery
+      ↓ Existing Skill?
+      ├─ Yes → Validate → Execute
+      └─ No → Compose/Create → Sandbox Test → Verify → Register
+      ↓ AgentLoop
+      ↓ Observe → Decide → Validate → Execute → Verify
+      ↓ Skill Result
+      ↓ Trajectory + Memory + Skill Version
+      ↓ Next Action / Completion
+
+- **Skill** (`models.py`) — skill_id, name, description,
+  risk level, input/output schemas, version, dependencies,
+  execution steps, verification criteria.  A Skill is never
+  a Tool subclass; responsibilities stay separate.
+- **SkillRegistry** (`registry.py`) — dynamic
+  register/discover/update/version/disable, structured
+  descriptions for the Planner, dependency checks (missing
+  dependency fails fast with a structured error), audit
+  trail.  New versions validate *before* replacing the
+  active one; failed updates keep the stable version;
+  `rollback()` restores any previous version.
+- **Composition** (`composer.py`) — combine tools into a
+  workflow (e.g. search → open → extract → compare →
+  draft → save) with `{{input.*}}` / `{{steps.*}}`
+  templating; every step validates against the real tool
+  schemas at build time.
+- **Generation** (`generator.py`) — identify capability →
+  search existing tools/skills → generate a composition →
+  strict validation → risk analysis → sandbox validation →
+  explicit registration.  The model never executes code;
+  drafts are data until a human/developer registers them
+  (approval required for sensitive+ risk).
+- **Sandbox** (`sandbox.py`) — static validation for
+  composed skills; the human-gated code-skill path runs in
+  an isolated subprocess (scrubbed env, temp cwd, blocked
+  imports, no `open`/`eval`, wall-clock timeout, CPU/memory
+  limits).  Best-effort against accidents, not a boundary
+  against determined attackers — hence the approval gate.
+- **Learning** (`learner.py`) — repeated *verified*
+  workflows become versioned *candidates* with provenance;
+  failed workflows never qualify, and candidates carry
+  tool names only (no external text, no model assumptions).
+  Promotion stays explicit and audited.
+- **Execution** (`executor.py`) — skills run through the
+  normal `ToolRegistry.execute` path via the `SkillTool`
+  adapter (`skill_<id>` tools the Planner picks directly),
+  so there is no separate orchestration loop.  Risk levels
+  (read-only / reversible / sensitive / destructive) route
+  through the existing human-approval mechanism — no
+  approver means sensitive skills do not run, and the loop
+  pauses resumably on `approval_required`.
+- **Security** — injection scans and secret scans at
+  registration; skills can only invoke already-registered
+  tools (no privilege escalation); sub-skill risks resolve
+  against the registry with cycle/depth guards.
+- **Agent wiring** — `AfnanAgent` builds the registry,
+  learner, generator and executor; `get_skill_registry()`,
+  `get_skill_learner()`, `get_skill_generator()`,
+  `set_skill_approver()`, `register_skill_tools()` (plus
+  `main` delegates); the AgentLoop receives the learner by
+  injection and lists skills in its decision context.
+  Tests: `tests/test_skill_builder.py` (49 tests).
+
 ## Autonomous browser workflow
 
 `run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,
