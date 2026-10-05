@@ -51,6 +51,13 @@ class BrowserErrorCode(str, Enum):
     STALE_ELEMENT = "stale_element"
     TIMEOUT = "timeout"
     OPERATION_FAILED = "operation_failed"
+    STARTUP_FAILED = "startup_failed"
+    TAB_NOT_FOUND = "tab_not_found"
+    PAGE_NOT_FOUND = "page_not_found"
+    BROWSER_CRASHED = "browser_crashed"
+    SESSION_EXPIRED = "session_expired"
+    PROFILE_ERROR = "profile_error"
+    UNSUPPORTED_OPERATION = "unsupported_operation"
 
 
 @dataclass
