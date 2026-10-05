@@ -18,8 +18,10 @@ from __future__ import annotations
 from typing import Any
 
 from afnan_ai.browser.base import BrowserException
+from afnan_ai.browser.challenge import detect_challenge
 from afnan_ai.browser.controller import BrowserController
 from afnan_ai.browser.extraction import clean_document
+from afnan_ai.browser.pagination import Paginator
 from afnan_ai.browser.research import WebResearch
 from afnan_ai.browser.semantics import rank as rank_matches
 from afnan_ai.tools.base import Tool, ToolExecutionError
@@ -926,6 +928,249 @@ class BrowserOpenResultTool(_BrowserTool):
         )
 
 
+class BrowserWaitForStableTool(_BrowserTool):
+    name = "browser_wait_for_stable"
+    description = (
+        "Wait until a dynamic (React/Next.js/Vue SPA) page stops "
+        "changing: client-side routing, async rendering and DOM "
+        "updates have settled. Condition-based — no blind sleeps. "
+        "Reports the detected frameworks and page state."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "tab_id": {"type": "string"},
+            "timeout_ms": {"type": "integer", "default": 5000},
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        result = self._call(
+            self.controller.wait_for_stable,
+            tab_id=arguments.get("tab_id"),
+            timeout_ms=int(arguments.get("timeout_ms") or 5000),
+        )
+        state = self.controller.current_page(result["tab_id"])
+        return {
+            **state,
+            "stable": result["stable"],
+            "ready_state": result["ready_state"],
+            "frameworks": result["frameworks"],
+            "text_length": result["text_length"],
+            "element_count": result["element_count"],
+            "observation": {
+                "type": "spa_state",
+                "summary": (
+                    f"Page stable at {state.get('url')}; "
+                    f"frameworks: "
+                    f"{', '.join(result['frameworks']) or 'none'}."
+                ),
+                "page": state,
+            },
+        }
+
+
+class BrowserCollectItemsTool(_BrowserTool):
+    name = "browser_collect_items"
+    description = (
+        "Collect items from a long list: mode 'scroll' walks an "
+        "infinite-scroll feed, mode 'next' clicks through pagination. "
+        "Duplicates are skipped; max_items and max_pages guarantee "
+        "the collection always terminates."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "mode": {
+                "type": "string",
+                "enum": ["scroll", "next"],
+                "default": "scroll",
+            },
+            "item_selector": {"type": "string"},
+            "max_items": {"type": "integer", "default": 100},
+            "max_pages": {"type": "integer", "default": 10},
+            "tab_id": {"type": "string"},
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        result = self._call(
+            Paginator(self.controller).collect,
+            mode=str(arguments.get("mode") or "scroll"),
+            item_selector=arguments.get("item_selector") or None,
+            max_items=int(arguments.get("max_items") or 100),
+            max_pages=int(arguments.get("max_pages") or 10),
+            tab_id=arguments.get("tab_id"),
+        )
+        if not result.get("success"):
+            raise ToolExecutionError(
+                str(result.get("error") or "Collection failed."),
+                tool=self.name,
+                details={"pagination": result},
+            )
+        return result
+
+
+class BrowserCheckChallengeTool(_BrowserTool):
+    name = "browser_check_challenge"
+    description = (
+        "Check whether the page is showing a CAPTCHA or human "
+        "verification challenge. Challenges are never solved or "
+        "bypassed: a detected challenge returns human_required so "
+        "the task can pause for the user."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {"tab_id": {"type": "string"}},
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        result = self._call(
+            detect_challenge, self.controller, arguments.get("tab_id")
+        )
+        return {
+            **result,
+            "status": (
+                "human_required" if result["detected"] else "clear"
+            ),
+            "observation": {
+                "type": "challenge_check",
+                "summary": (
+                    "Human check detected "
+                    f"({result.get('type')}): human intervention "
+                    "required."
+                    if result["detected"]
+                    else "No human check detected on this page."
+                ),
+            },
+        }
+
+
+class BrowserDownloadsTool(_BrowserTool):
+    name = "browser_downloads"
+    description = (
+        "List browser downloads or wait for one to finish. Tracks "
+        "filename, type, destination, size and integrity; unsafe "
+        "(executable) downloads are flagged and never opened."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["list", "wait"],
+                "default": "list",
+            },
+            "download_id": {"type": "string"},
+            "timeout_ms": {"type": "integer", "default": 30000},
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        manager = self.controller.download_manager
+        if str(arguments.get("action") or "list") == "wait":
+            record = self._call(
+                manager.wait_for,
+                arguments.get("download_id") or None,
+                timeout_ms=int(arguments.get("timeout_ms") or 30000),
+            )
+            downloads = [record]
+        else:
+            downloads = manager.list_downloads()
+        return {
+            "downloads": downloads,
+            "count": len(downloads),
+            "observation": {
+                "type": "downloads",
+                "summary": (
+                    f"{len(downloads)} download(s) tracked."
+                ),
+                "downloads": downloads,
+            },
+        }
+
+
+class BrowserSessionTool(_BrowserTool):
+    name = "browser_session"
+    description = (
+        "Inspect or persist the browsing session: current tab "
+        "context, navigation history, or save/load/restore a saved "
+        "session so a later task can recover this task's context."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": [
+                    "current", "history", "export", "save", "load",
+                    "restore",
+                ],
+                "default": "current",
+            },
+            "path": {"type": "string"},
+            "tab_id": {"type": "string"},
+            "limit": {"type": "integer", "default": 50},
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        session = self.controller.session_manager
+        action = str(arguments.get("action") or "current")
+        if action == "current":
+            result: dict[str, Any] = session.current()
+        elif action == "history":
+            entries = session.history(
+                tab_id=arguments.get("tab_id"),
+                limit=int(arguments.get("limit") or 50),
+            )
+            result = {"history": entries, "count": len(entries)}
+        elif action == "export":
+            result = {"session": session.export()}
+        elif action in ("save", "load", "restore"):
+            path = str(arguments.get("path") or "")
+            if not path:
+                raise ToolExecutionError(
+                    f"browser_session {action} needs a 'path'.",
+                    tool=self.name,
+                )
+            if action == "save":
+                result = session.save(path)
+            elif action == "load":
+                data = session.load(path)
+                result = {
+                    "loaded": True,
+                    "tabs": len(data.get("tabs") or []),
+                    "history_entries": len(
+                        data.get("history") or []
+                    ),
+                }
+            else:
+                result = session.restore(path)
+        else:
+            raise ToolExecutionError(
+                f"Unknown session action {action!r}.",
+                tool=self.name,
+            )
+        return {
+            **result,
+            "observation": {
+                "type": "browser_session",
+                "summary": f"Session action '{action}' completed.",
+            },
+        }
+
+
 def create_browser_tools(
     controller: BrowserController,
 ) -> list[Tool]:
@@ -965,6 +1210,11 @@ def create_browser_tools(
         BrowserExtractContentTool(controller),
         BrowserSearchTool(controller, research),
         BrowserOpenResultTool(controller, research),
+        BrowserWaitForStableTool(controller),
+        BrowserCollectItemsTool(controller),
+        BrowserCheckChallengeTool(controller),
+        BrowserDownloadsTool(controller),
+        BrowserSessionTool(controller),
     ]
 
 

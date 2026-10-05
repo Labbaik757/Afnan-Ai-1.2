@@ -19,6 +19,7 @@ crashing.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from afnan_ai.browser.base import BrowserErrorCode, BrowserException
@@ -161,6 +162,15 @@ class BrowserBackend(ABC):
         links, tables) for content extraction."""
         self._unsupported("page content extraction")
 
+    def page_probe(self, handle: Any) -> dict[str, Any]:
+        """Dynamic-state probe (SPA awareness): readiness, detected
+        frameworks, text/element counts and a content hash."""
+        self._unsupported("page probe")
+
+    def downloads(self) -> list[dict[str, Any]]:
+        """Downloads the driver has seen (empty by default)."""
+        return []
+
     def interactive_elements(
         self, handle: Any, limit: int
     ) -> list[Any]:
@@ -209,10 +219,12 @@ class PlaywrightBackend(BrowserBackend):
         "webkit": ("webkit", None),
     }
 
-    def __init__(self):
+    def __init__(self, downloads_dir: str | None = None):
         self._playwright = None
         self._browser = None
         self._context = None
+        self._download_records: list[dict[str, Any]] = []
+        self._downloads_dir = downloads_dir
 
     # -- lifecycle ------------------------------------------------------
     def start(self, browser: str, headless: bool) -> None:
@@ -301,7 +313,42 @@ class PlaywrightBackend(BrowserBackend):
 
     # -- pages ------------------------------------------------------------
     def new_page(self) -> Any:
-        return self._require_page().new_page()
+        page = self._require_page().new_page()
+        try:
+            page.on("download", self._on_download)
+        except Exception:
+            pass
+        return page
+
+    def _on_download(self, download: Any) -> None:
+        """Record a browser download; it is saved, never opened."""
+        record: dict[str, Any] = {
+            "id": f"dl_{len(self._download_records) + 1}",
+            "url": getattr(download, "url", "") or "",
+            "filename": (
+                getattr(download, "suggested_filename", "") or "download"
+            ),
+            "state": "started",
+            "path": None,
+            "failure": None,
+        }
+        self._download_records.append(record)
+        try:
+            if self._downloads_dir:
+                target_dir = Path(self._downloads_dir)
+            else:
+                target_dir = Path.home() / "Downloads" / "afnan-ai"
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / record["filename"]
+            download.save_as(str(target))
+            record["path"] = str(target)
+            record["state"] = "completed"
+        except Exception as exc:  # download failed mid-flight
+            record["state"] = "failed"
+            record["failure"] = str(exc)
+
+    def downloads(self) -> list[dict[str, Any]]:
+        return [dict(r) for r in self._download_records]
 
     def close_page(self, handle: Any) -> None:
         handle.close()
@@ -525,6 +572,39 @@ class PlaywrightBackend(BrowserBackend):
             result = handle.evaluate(self._CONTENT_JS)
         except Exception as e:
             raise self._driver_error(e, "page content extraction") from e
+        return result if isinstance(result, dict) else {}
+
+    _PROBE_JS = """() => {
+      const frameworks = [];
+      if (window.__NEXT_DATA__) frameworks.push('nextjs');
+      if (window.React || document.querySelector(
+        '[data-reactroot], [data-reactid]')) frameworks.push('react');
+      if (window.Vue || document.querySelector('[data-v-app]'))
+        frameworks.push('vue');
+      if (window.ng) frameworks.push('angular');
+      const body = document.body;
+      const text = body ? (body.innerText || '') : '';
+      const html = body ? body.innerHTML : '';
+      let hash = 0;
+      for (let i = 0; i < html.length; i++) {
+        hash = ((hash << 5) - hash + html.charCodeAt(i)) | 0;
+      }
+      return {
+        url: location.href,
+        title: document.title,
+        ready_state: document.readyState,
+        frameworks: frameworks,
+        text_length: text.length,
+        element_count: document.querySelectorAll('*').length,
+        content_hash: String(hash)
+      };
+    }"""
+
+    def page_probe(self, handle: Any) -> dict[str, Any]:
+        try:
+            result = handle.evaluate(self._PROBE_JS)
+        except Exception as e:
+            raise self._driver_error(e, "page probe") from e
         return result if isinstance(result, dict) else {}
 
     def interactive_elements(
