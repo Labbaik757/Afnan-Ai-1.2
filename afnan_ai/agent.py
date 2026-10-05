@@ -1380,7 +1380,11 @@ class AfnanAgent:
 
     # -- speech --------------------------------------------------------
     def speak(self, text: str) -> None:
-        _speech.speak(text, self.adapter)
+        _speech.speak(
+            text,
+            self.adapter,
+            urdu_voice=self.config.tts_urdu_voice,
+        )
 
     # -- startup animation ---------------------------------------------
     def show_startup_gif(self, gif_path: str | None = None) -> None:
@@ -1521,7 +1525,9 @@ What do you want me to do?
                 audio = self.recognizer.listen(
                     source, timeout=timeout, phrase_time_limit=phrase_time
                 )
-            return self.recognizer.recognize_google(audio, language="en-IN")
+            return self.recognizer.recognize_google(
+                audio, language=self.config.stt_language
+            )
         except Exception:
             return ""
 
@@ -1761,22 +1767,80 @@ What do you want me to do?
     def start(self) -> None:
         self.show_startup_gif()
         self.speak("Afnan is activated")
+        from afnan_ai.wakeword import create_detector
+
+        # On-device wake word when a model is configured;
+        # otherwise the previous cloud loop is the fallback.
+        detector = create_detector(
+            self.config.wakeword_model,
+            threshold=self.config.wakeword_threshold,
+        )
+        if detector is not None:
+            print("on-device wake word active")
         while True:
             try:
-                word = self.listen_command(timeout=5, phrase_time=3)
-                if not word:
-                    continue
-                if self.config.wake_word in word.lower():
-                    self.speak("Yes boss")
-                    command = self.listen_command(timeout=7, phrase_time=8)
-                    if command:
-                        self.process_command(command)
+                if detector is not None:
+                    if not self._wait_for_wake_local(detector):
+                        continue
+                else:
+                    word = self.listen_command(
+                        timeout=5, phrase_time=3
+                    )
+                    if not word:
+                        continue
+                    if self.config.wake_word not in word.lower():
+                        continue
+                self.speak("Yes boss")
+                command = self.listen_command(
+                    timeout=7, phrase_time=8
+                )
+                if command:
+                    self.process_command(command)
             except SystemExit:
                 break
             except KeyboardInterrupt:
                 break
             except Exception:
                 pass
+
+    def _wait_for_wake_local(
+        self, detector, timeout_s: float = 120.0
+    ) -> bool:
+        """Stream mic frames through the on-device detector.
+
+        Returns True on wake, False on timeout/error (the
+        caller then falls back to the cloud loop).
+        """
+        if sr is None or self.recognizer is None:
+            return False
+        import time
+
+        try:
+            with sr.Microphone(sample_rate=16000) as source:
+                self.recognizer.adjust_for_ambient_noise(
+                    source, duration=0.5
+                )
+                print("Listening (on-device wake word)...")
+                stream = source.stream
+                frame_bytes = detector.frame_samples * 2
+                deadline = time.time() + timeout_s
+                while time.time() < deadline:
+                    try:
+                        chunk = stream.read(
+                            detector.frame_samples
+                        )
+                    except Exception:
+                        return False
+                    if len(chunk) < frame_bytes:
+                        continue
+                    if detector.is_wake(
+                        chunk[:frame_bytes],
+                        self.config.wakeword_threshold,
+                    ):
+                        return True
+        except Exception:
+            return False
+        return False
 
 
 def create_agent(
