@@ -102,6 +102,10 @@ class AfnanAgent:
         computer_approver=None,
         enable_computer_tools: bool = True,
         downloads_dir=None,
+        connector_registry=None,
+        connector_approver=None,
+        enable_connector_tools: bool = True,
+        connector_credentials=None,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -300,6 +304,43 @@ class AfnanAgent:
         )
         self._task_worker = None
         self._background_runner = None
+        # Connector System: external services (email, calendar,
+        # cloud storage, chat, ...) through a registry of
+        # self-contained Connector implementations.  The agent
+        # knows only the generic interface; new services are
+        # added by registering a Connector, never by changing
+        # core code.  Secrets travel only through the credential
+        # store (provide_credentials), never through tools.
+        self.connector_service = None
+        self.connector_registry = None
+        if enable_connector_tools:
+            from afnan_ai.connectors import (
+                ConnectorApprovalGate,
+                ConnectorRegistry,
+                ConnectorService,
+                MemoryCredentialStore,
+                create_connector_tools,
+            )
+
+            self.connector_registry = (
+                connector_registry or ConnectorRegistry()
+            )
+            # Best-effort entry-point discovery: installed
+            # distributions can contribute connectors without
+            # any agent change.
+            self.connector_registry.discover()
+            gate = ConnectorApprovalGate(connector_approver)
+            self.connector_service = ConnectorService(
+                self.connector_registry,
+                credential_store=(
+                    connector_credentials or MemoryCredentialStore()
+                ),
+                gate=gate,
+                audit_path=str(memory_base / "connector_audit.jsonl"),
+            )
+            self.tools.register_many(
+                create_connector_tools(self.connector_service)
+            )
         self.orchestrator: OrchestratorAgent = orchestrator or OrchestratorAgent(
             planner=self.planner,
             executor=self.executor,
@@ -403,6 +444,8 @@ class AfnanAgent:
             return self.screen_observer.verifier_observation(step)
         if tool_name.startswith("computer_") and self.computer:
             return self.computer.verifier_observation(step)
+        if tool_name.startswith("connector_") and self.connector_service:
+            return self.connector_service.verifier_observation(step)
         return None
         return self.tools.get_or_none(name)
 
@@ -699,6 +742,11 @@ class AfnanAgent:
             observation_provider=self._loop_observation,
             memory_store=self.memory_store,
             goal_manager=self.goal_manager,
+            system_context_provider=(
+                self.connector_service.context_section
+                if self.connector_service is not None
+                else None
+            ),
         )
 
     def run_agent_loop(self, goal, *, state=None, resume_from=None,
@@ -741,6 +789,25 @@ class AfnanAgent:
         actions (None restores the fail-safe refusal)."""
         if self.computer is not None:
             self.computer.gate.set_approver(approver)
+
+    # -- connector system ---------------------------------------
+    def get_connector_registry(self):
+        """The ConnectorRegistry (None when connector tools are
+        disabled).  Register new service integrations here —
+        no core agent change needed."""
+        return self.connector_registry
+
+    def get_connector_service(self):
+        """The ConnectorService: credentials, scopes, approval,
+        execution, audit (None when disabled)."""
+        return self.connector_service
+
+    def set_connector_approver(self, approver) -> None:
+        """Set the human approver for sensitive/irreversible
+        connector operations (None restores the fail-safe
+        refusal: they do not run without a human yes)."""
+        if self.connector_service is not None:
+            self.connector_service.set_approver(approver)
 
     # -- persistent memory / goals / tasks --------------------------
     def get_memory_store(self):
