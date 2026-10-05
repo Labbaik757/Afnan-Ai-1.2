@@ -756,7 +756,13 @@ Afnan Agent → Browser Tools → BrowserController
   tool — never raw engine features), and crash detection +
   recovery: a dead engine flips the session to `crashed`,
   `recover()` restarts it and reports the recoverable tabs
-  instead of blindly restarting the task.
+  instead of blindly restarting the task.  By default the
+  agent gives the runtime a persistent home
+  (`~/.afnan-ai/browser-runtime`, override with
+  `browser_runtime_dir=` / `AgentConfig.browser_runtime_dir` /
+  `AFNAN_BROWSER_RUNTIME_DIR`), so profiles and session state
+  survive restarts; supplying your own controller keeps full
+  control.
 - **`BrowserEngineAdapter`** (`afnan_ai/browser/engine.py`) is
   the only interface an engine implements; handles stay opaque
   and no engine types cross it.  **`PlaywrightAdapter`**

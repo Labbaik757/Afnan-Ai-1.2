@@ -11,7 +11,7 @@ Environment overrides (``AgentConfig.from_env()``)::
 
     AFNAN_WAKE_WORD, AFNAN_MAX_ITERATIONS,
     AFNAN_MAX_RECOVERY_ATTEMPTS, AFNAN_LLM_PROVIDER,
-    AFNAN_LLM_MODEL, AFNAN_GIF_PATH
+    AFNAN_LLM_MODEL, AFNAN_GIF_PATH, AFNAN_BROWSER_RUNTIME_DIR
 """
 
 from __future__ import annotations
@@ -41,6 +41,9 @@ class AgentConfig:
     llm_provider: str = "ollama"
     llm_model: str = "llama3"
     gif_path: str = "afnan_animation.gif"
+    #: Where the Afnan Browser Runtime persists profiles and
+    #: session state.  None → ~/.afnan-ai/browser-runtime.
+    browser_runtime_dir: str | None = None
 
     @classmethod
     def from_env(cls, prefix: str = "AFNAN_") -> "AgentConfig":
@@ -66,5 +69,9 @@ class AgentConfig:
             ),
             gif_path=os.environ.get(
                 f"{prefix}GIF_PATH", defaults.gif_path
+            ),
+            browser_runtime_dir=os.environ.get(
+                f"{prefix}BROWSER_RUNTIME_DIR",
+                defaults.browser_runtime_dir,
             ),
         )

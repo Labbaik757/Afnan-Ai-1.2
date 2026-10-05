@@ -21,6 +21,7 @@ from pathlib import Path
 
 from afnan_ai import speech as _speech
 from afnan_ai.browser import BrowserController, register_browser_tools
+from afnan_ai.browser.runtime import AfnanBrowserRuntime
 from afnan_ai.browser.reliability import BrowserReliability
 from afnan_ai.browser.security import ApprovalGate
 from afnan_ai.browser.workflow import BrowserWorkflow
@@ -93,6 +94,7 @@ class AfnanAgent:
         security_policy=None,
         challenge_handler=None,
         checkpoint_dir=None,
+        browser_runtime_dir=None,
         screen_observer: ScreenObserver | None = None,
         enable_screen_tools: bool = True,
     ):
@@ -109,10 +111,25 @@ class AfnanAgent:
         # browser Tools in the same registry, so the Planner/Agent
         # can launch, navigate and read pages like any other
         # capability.  Constructing it launches nothing; the
-        # browser starts only when a browser tool runs.
-        self.browser: BrowserController = (
-            browser_controller or BrowserController()
-        )
+        # browser starts only when a browser tool runs.  By
+        # default the controller runs on an AfnanBrowserRuntime
+        # with a persistent runtime directory, so browser
+        # profiles and session state survive restarts.
+        if browser_controller is not None:
+            self.browser = browser_controller
+        else:
+            runtime_dir = (
+                browser_runtime_dir
+                or (config.browser_runtime_dir if config else None)
+                or str(
+                    Path.home() / ".afnan-ai" / "browser-runtime"
+                )
+            )
+            self.browser = BrowserController(
+                runtime=AfnanBrowserRuntime(
+                    runtime_dir=runtime_dir
+                )
+            )
         # Human approval for sensitive browser actions (purchases,
         # sends, destructive clicks, uploads...).  Without an
         # approver, sensitive actions are refused with a

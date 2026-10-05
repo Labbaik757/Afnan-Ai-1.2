@@ -422,5 +422,80 @@ class TestControllerOnRuntime(unittest.TestCase):
         self.assertEqual(caps.output["adapter"], "fake")
 
 
+class TestDefaultPersistence(unittest.TestCase):
+    """Profiles persist by default through the agent's runtime."""
+
+    def test_config_env_override(self):
+        import os as _os
+
+        from afnan_ai.config import AgentConfig
+
+        old = _os.environ.get("AFNAN_BROWSER_RUNTIME_DIR")
+        _os.environ["AFNAN_BROWSER_RUNTIME_DIR"] = "/tmp/afnan-rt"
+        try:
+            config = AgentConfig.from_env()
+        finally:
+            if old is None:
+                _os.environ.pop("AFNAN_BROWSER_RUNTIME_DIR", None)
+            else:
+                _os.environ["AFNAN_BROWSER_RUNTIME_DIR"] = old
+        self.assertEqual(config.browser_runtime_dir, "/tmp/afnan-rt")
+
+    def test_agent_runtime_dir_and_profile_persistence(self):
+        from afnan_ai.agent import AfnanAgent
+
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = AfnanAgent(
+                llm_provider=QueueLLM([]), browser_runtime_dir=tmp
+            )
+            runtime = agent.get_browser_runtime()
+            self.assertEqual(runtime.runtime_dir, Path(tmp))
+            runtime.create_profile("work")
+            self.assertTrue(Path(tmp, "profiles.json").is_file())
+
+            agent2 = AfnanAgent(
+                llm_provider=QueueLLM([]), browser_runtime_dir=tmp
+            )
+            names = [
+                p["name"] for p in agent2.browser.list_profiles()
+            ]
+            self.assertIn("work", names)
+
+    def test_controller_profile_uses_persistent_storage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = FakeBrowserAdapter()
+            adapter.add_page(
+                "https://a.example/", title="A", text="page a",
+                elements=[],
+            )
+            runtime = AfnanBrowserRuntime(
+                adapter=adapter, runtime_dir=tmp
+            )
+            controller = BrowserController(runtime=runtime)
+            controller.launch()
+            controller.new_tab("https://a.example/")
+            controller.create_profile("work")
+            profile = runtime.get_profile("work")
+            self.assertTrue(profile.storage_dir.endswith("work"))
+            self.assertTrue(Path(profile.storage_dir).is_dir())
+            controller.select_profile("work")
+            options = adapter.context_options["work"]
+            self.assertTrue(
+                options["user_data_dir"].endswith("work")
+            )
+            controller.shutdown()
+
+            # A fresh controller on the same runtime dir knows
+            # the profile without re-creating it.
+            runtime2 = AfnanBrowserRuntime(
+                adapter=FakeBrowserAdapter(), runtime_dir=tmp
+            )
+            controller2 = BrowserController(runtime=runtime2)
+            names = [
+                p["name"] for p in controller2.list_profiles()
+            ]
+            self.assertIn("work", names)
+
+
 if __name__ == "__main__":
     unittest.main()
