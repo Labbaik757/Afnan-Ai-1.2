@@ -832,6 +832,62 @@ recovery) when a Chromium binary is installed, and compares
 the normalized controller output of the Chromium, Playwright
 and fake adapters.
 
+## Browser Perception & Computer Use
+
+On top of the runtime sits the unified perception layer
+(`afnan_ai/browser/perception.py`) — the agent no longer sees
+"a page to automate" but one structured computer environment:
+
+```
+Browser Runtime → Unified Observation (accessibility → DOM → visual)
+    → Locate → Validate → Act → Fresh Observation → Verify
+```
+
+- **`browser_perceive`** returns one serializable
+  `UnifiedObservation`: URL, title, visible text, dialogs,
+  loading state and unified elements.  Every element — whether
+  the accessibility tree, the DOM or pixel detection found it —
+  carries the same identity: `element_id`, role, accessible
+  name, text, locator/frame/tab context, bounding box,
+  visibility/enabled/editable state, a confidence score and
+  its `source` (`accessibility` | `dom` | `visual`).
+  Accessibility information is always preferred; DOM fills the
+  gaps; the ScreenObserver's visual detection is only the
+  fallback (canvas UIs, visual-only controls), and never
+  silently outranks structured data.
+- **`browser_locate`** resolves natural-language targets
+  ("Login button", "Search box", "Email field") into ranked
+  candidates.  Low-confidence candidates expose no
+  `element_id`, so they cannot be acted on; mid-confidence
+  targets are routed through the human approval gate before
+  anything executes.
+- **`browser_computer_act`** performs one validated action —
+  click, double-click, type, clear, select, check/uncheck,
+  press_key, hotkey, scroll, mouse_move, drag, focus, hover —
+  through the BrowserController.  Before acting it verifies
+  the right tab, that the target still exists and is usable,
+  and that its identity is unchanged; stale or wrong-tab
+  targets are refused structurally.  Coordinate actions exist
+  only as the visual fallback (element bounding-box centers),
+  behind the same challenge guard and approval gate.  Every
+  result carries a *fresh* observation with `page_changed`,
+  `target_still_exists` and expectation checks — executing an
+  action is never itself treated as task success; the
+  Verifier judges the observed outcome.  Before/after
+  observation summaries land in AgentState through the usual
+  tool-result recording, with sensitive values redacted.
+- Element ids are stable across re-observations of an
+  unchanged page (fresh refs and state underneath), and go
+  stale the moment their element vanishes — dynamic pages,
+  SPA navigation and modal changes are handled by
+  re-observation, never by fixed sleeps.
+
+Tests: `tests/test_browser_perception.py` (unified
+observation, AX preference, DOM fallback, semantic location,
+the full action set, stale/wrong-tab refusal, confidence
+gating with and without approval, visual fallback, multi-tab
+safety, tool-level workflows and AgentState recording).
+
 ## Autonomous browser workflow
 
 `run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,
