@@ -756,6 +756,43 @@ End-to-end scenarios live in `tests/test_browser_workflow.py`
 pagination, downloads, dynamic SPA pages, limits, recovery,
 profile/session continuity).
 
+## Observation-driven loop (Phase 3)
+
+`run_browser_goal(goal, loop=True)` — or
+`Orchestrator.run_loop(...)` directly — runs the task as a
+true autonomous loop instead of one long pre-generated plan:
+
+* each cycle the Planner sees the **current** AgentState
+  (fresh observations, completed/failed steps, tool results)
+  and proposes only the next few actions (`batch_limit`,
+  default 3), or reports the goal complete via the
+  `{"complete": true}` plan form;
+* every action is executed and verified against a fresh
+  observation before the next decision; a failed or uncertain
+  step stops the batch immediately — the remaining steps of
+  that plan are discarded, recovery replans from the current
+  state, and the Planner re-decides. A stale plan is never
+  followed blindly;
+* hard limits bound the loop: `max_steps`,
+  `max_duration_s`, `max_replans`, `max_llm_calls`,
+  `max_repeated_actions` (the same tool with the same
+  arguments may not repeat endlessly) plus the existing
+  recovery-attempt limits;
+* the Planner additionally self-repairs one invalid reply
+  (bounded `max_parse_retries`, default 1) before failing.
+
+Accessibility now uses the modern Playwright API:
+`page.aria_snapshot()` is parsed into the normalized tree
+(the deprecated `page.accessibility` API remains only as a
+fallback for very old Playwright versions, and the DOM-derived
+tree after that). Semantic matches in the 0.5–0.8 confidence
+band are gated: acting on them requires human approval
+(category `uncertain_target`). Uploads are verified after the
+fact (the file input must show the uploaded file; a mismatch
+is a structured failure), and dialogs a page raises are
+recorded, redacted and dismissed by the driver and surfaced
+in page observations. Tests: `tests/test_architecture_upgrade.py`.
+
 ## Operations: network, checkpoints, rate limits, profiles
 
 - **Network awareness**: pages report their request health
@@ -860,7 +897,8 @@ Five capabilities layered on the same BrowserController (no
 second driver, no browser logic in the core agent):
 
 - **Accessibility tree** (`browser_accessibility_tree`) — the
-  browser's own accessibility snapshot normalized into
+  browser's accessibility structure (Playwright's modern
+  `page.aria_snapshot()`, parsed and normalized) into
   structured nodes (role, name, value, heading level); when a
   driver cannot provide one, an equivalent tree is derived
   from DOM interactive elements with live refs. Accessibility
@@ -870,7 +908,8 @@ second driver, no browser logic in the core agent):
   ranked by role fit + name similarity with confidence scores.
   Matches below 0.5 are returned with **no element reference**,
   so a low-confidence guess can never be acted on
-  automatically.
+  automatically; matches in the 0.5–0.8 band require human
+  approval before an action runs on them.
 - **Multi-tab task manager** — tabs carry task purposes
   (`browser_new_tab` with `purpose`, `browser_set_tab_purpose`,
   purposes shown by `browser_list_tabs` and recorded into

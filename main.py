@@ -163,15 +163,17 @@ def get_checkpointer():
 
 
 def run_browser_goal(goal, profile=None, max_iterations=None,
-                     max_duration_s=None):
+                     max_duration_s=None, loop=False):
     """Run one autonomous browser goal end to end: briefing,
     plan, execute, re-observe, verify, recover, and a final
-    answer composed from the recorded evidence."""
+    answer composed from the recorded evidence.  loop=True uses
+    the observation-driven loop (re-decided batches)."""
     return _agent.run_browser_goal(
         goal,
         profile=profile,
         max_iterations=max_iterations,
         max_duration_s=max_duration_s,
+        loop=loop,
     )
 
 
