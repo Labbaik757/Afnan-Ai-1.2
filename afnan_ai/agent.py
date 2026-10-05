@@ -161,6 +161,13 @@ class AfnanAgent:
             )
         if enable_screen_tools and self.screen_observer is not None:
             register_screen_tools(self.tools, self.screen_observer)
+        # The perception layer's visual fallback uses the same
+        # ScreenObserver as the screen tools (one observer, one
+        # set of visual refs).
+        if enable_browser_tools and self.screen_observer is not None:
+            perception = getattr(self.browser, "perception", None)
+            if perception is not None:
+                perception.screen_observer = self.screen_observer
         # The agent talks to a model only through the LLMProvider
         # interface.  By default that is the local Ollama provider
         # (llama3), exactly as before; pass any other provider
@@ -560,6 +567,14 @@ class AfnanAgent:
         if self.browser is None:
             return None
         return self.browser.runtime
+
+    def get_browser_perception(self):
+        """The unified BrowserPerception layer (accessibility /
+        DOM / visual observation + computer actions), or None
+        when browser tools are off."""
+        if self.browser is None:
+            return None
+        return getattr(self.browser, "perception", None)
 
     # Alias in goal vocabulary
     run_goal = run_task
