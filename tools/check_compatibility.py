@@ -652,6 +652,63 @@ def main() -> int:
         failures.append(f"artifacts smoke check crashed: {e}")
         print(f"FAIL: artifacts smoke check crashed: {e}")
 
+    # ---- Proactive intelligence -----------------------------------------
+    # Proactive ideas live in afnan_ai/proactive and know nothing
+    # about browser/computer/connector/playwright, the loop, or
+    # the artifact/subagent systems.  The engine never executes:
+    # accepted ideas become normal TaskManager tasks.
+    proactive_dir = ROOT / "afnan_ai" / "proactive"
+    proactive_coupling = []
+    for path in sorted(proactive_dir.glob("*.py")):
+        source = path.read_text()
+        for bad in (
+            "afnan_ai.browser", "afnan_ai.computer",
+            "afnan_ai.connectors", "afnan_ai.agent_loop",
+            "afnan_ai.artifacts", "afnan_ai.subagents",
+            "playwright",
+        ):
+            if bad in source:
+                proactive_coupling.append(f"{path.name}:{bad}")
+                break
+    if proactive_coupling:
+        failures.append(
+            f"proactive layer coupling: {proactive_coupling}"
+        )
+        print(
+            f"FAIL: proactive layer coupling: {proactive_coupling}"
+        )
+    else:
+        print("OK: proactive layer is decoupled (no browser/computer/connector/loop/artifact/subagent imports)")
+
+    if "afnan_ai.proactive" in loop_source:
+        failures.append("agent_loop imports the proactive package")
+        print(
+            "FAIL: agent_loop.py references afnan_ai.proactive"
+        )
+    else:
+        print("OK: AgentLoop stays proactive-agnostic")
+
+    try:
+        from afnan_ai.proactive import (
+            ProactiveConfig, ProactiveEngine, Idea,
+            IdeaStatus, SuggestionType,
+        )
+        _eng = ProactiveEngine(
+            store_path=tempfile.mktemp(suffix=".json")
+        )
+        assert _eng.config.enabled
+        _idea = Idea(
+            idea_id=Idea.new_id(), title="probe",
+            description="d", reason="r",
+            suggestion_type=SuggestionType.FOLLOW_UP.value,
+            confidence=0.8, priority=3,
+        )
+        assert _idea.signature()
+        print("OK: proactive package imports cleanly")
+    except Exception as e:  # noqa: BLE001 - report, don't crash
+        failures.append(f"proactive smoke check crashed: {e}")
+        print(f"FAIL: proactive smoke check crashed: {e}")
+
     try:
         from afnan_ai.context import (
             ContextManager, TrajectoryStore, ContextBudget,
