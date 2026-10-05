@@ -249,6 +249,265 @@ class BrowserShutdownTool(_BrowserTool):
         return self._call(self.controller.shutdown)
 
 
+# ----------------------------------------------------------------------
+# Page interaction tools
+#
+# A *target* is either "ref" (an element reference returned by
+# browser_find_elements) or locator fields (selector / test_id /
+# label / placeholder / role+name / text) which are resolved fresh
+# against the live page.  Stable selectors are preferred; role,
+# label, placeholder and text lookups are the accessibility
+# fallback.  Every interaction validates its target first.
+# ----------------------------------------------------------------------
+
+_TARGET_PROPERTIES = {
+    "ref": {"type": "string"},
+    "selector": {"type": "string"},
+    "test_id": {"type": "string"},
+    "label": {"type": "string"},
+    "placeholder": {"type": "string"},
+    "role": {"type": "string"},
+    "name": {"type": "string"},
+    "text": {"type": "string"},
+    "tab_id": {"type": "string"},
+    "timeout_ms": {"type": "integer"},
+}
+
+
+def _target_from(arguments: dict[str, Any]) -> dict[str, Any] | None:
+    if arguments.get("ref"):
+        return {"ref": arguments["ref"]}
+    locator = {
+        key: arguments[key]
+        for key in ("selector", "test_id", "label", "placeholder", "role", "name", "text")
+        if arguments.get(key)
+    }
+    return {"locator": locator} if locator else None
+
+
+def _tab_and_timeout(arguments: dict[str, Any]):
+    return arguments.get("tab_id"), arguments.get("timeout_ms")
+
+
+class BrowserFindElementsTool(_BrowserTool):
+    name = "browser_find_elements"
+    description = (
+        "Find elements on the current page by selector, test id, "
+        "label, placeholder, accessibility role/name or visible "
+        "text, and return each element's identity (ref) and basic "
+        "properties (tag, text, attributes, visible, enabled)."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "selector": {"type": "string"},
+            "test_id": {"type": "string"},
+            "label": {"type": "string"},
+            "placeholder": {"type": "string"},
+            "role": {"type": "string"},
+            "name": {"type": "string"},
+            "text": {"type": "string"},
+            "tab_id": {"type": "string"},
+            "limit": {"type": "integer"},
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        locator = {
+            key: arguments[key]
+            for key in ("selector", "test_id", "label", "placeholder", "role", "name", "text")
+            if arguments.get(key)
+        }
+        elements = self._call(
+            self.controller.find_elements,
+            locator,
+            tab_id=arguments.get("tab_id"),
+            limit=arguments.get("limit", 10),
+        )
+        return {"elements": elements, "count": len(elements)}
+
+
+class BrowserInspectElementTool(_BrowserTool):
+    name = "browser_inspect_element"
+    description = (
+        "Read one element's identity and basic properties (tag, "
+        "text, id/name/type/role attributes, value, visible, "
+        "enabled, editable) by ref or locator."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": dict(_TARGET_PROPERTIES),
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        return self._call(
+            self.controller.inspect_element,
+            _target_from(arguments),
+            tab_id=arguments.get("tab_id"),
+        )
+
+
+class BrowserClickTool(_BrowserTool):
+    name = "browser_click"
+    description = (
+        "Click an element identified by ref (from "
+        "browser_find_elements) or by selector/role/text locator. "
+        "The target is validated (exists, visible, enabled) "
+        "before clicking."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": dict(_TARGET_PROPERTIES),
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        tab_id, timeout = _tab_and_timeout(arguments)
+        return self._call(
+            self.controller.click,
+            _target_from(arguments),
+            tab_id=tab_id,
+            timeout_ms=timeout,
+        )
+
+
+class BrowserTypeTool(_BrowserTool):
+    name = "browser_type"
+    description = (
+        "Type text into an input or textarea identified by ref or "
+        "locator. Set clear_first to replace the current value."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            **_TARGET_PROPERTIES,
+            "text": {"type": "string"},
+            "clear_first": {"type": "boolean"},
+        },
+        "required": ["text"],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        tab_id, timeout = _tab_and_timeout(arguments)
+        return self._call(
+            self.controller.type_text,
+            _target_from(arguments),
+            arguments["text"],
+            tab_id=tab_id,
+            clear_first=bool(arguments.get("clear_first", False)),
+            timeout_ms=timeout,
+        )
+
+
+class BrowserClearTool(_BrowserTool):
+    name = "browser_clear"
+    description = "Clear the current value of an input or textarea."
+    input_schema = {
+        "type": "object",
+        "properties": dict(_TARGET_PROPERTIES),
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        tab_id, timeout = _tab_and_timeout(arguments)
+        return self._call(
+            self.controller.clear_field,
+            _target_from(arguments),
+            tab_id=tab_id,
+            timeout_ms=timeout,
+        )
+
+
+class BrowserSelectOptionTool(_BrowserTool):
+    name = "browser_select_option"
+    description = "Select an option (by value) in a <select> dropdown."
+    input_schema = {
+        "type": "object",
+        "properties": {
+            **_TARGET_PROPERTIES,
+            "value": {"type": "string"},
+        },
+        "required": ["value"],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        tab_id, timeout = _tab_and_timeout(arguments)
+        return self._call(
+            self.controller.select_option,
+            _target_from(arguments),
+            arguments["value"],
+            tab_id=tab_id,
+            timeout_ms=timeout,
+        )
+
+
+class BrowserPressKeyTool(_BrowserTool):
+    name = "browser_press_key"
+    description = (
+        "Press a keyboard key (e.g. Enter, Tab, Escape, ArrowDown, "
+        "Control+A) on an element (by ref/locator) or on the page."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            **_TARGET_PROPERTIES,
+            "key": {"type": "string"},
+        },
+        "required": ["key"],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        tab_id, timeout = _tab_and_timeout(arguments)
+        return self._call(
+            self.controller.press_key,
+            arguments["key"],
+            _target_from(arguments),
+            tab_id=tab_id,
+            timeout_ms=timeout,
+        )
+
+
+class BrowserScrollTool(_BrowserTool):
+    name = "browser_scroll"
+    description = (
+        "Scroll the page by dx/dy pixels, or scroll an element "
+        "(by ref/locator) into view when a target is given."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            **_TARGET_PROPERTIES,
+            "dx": {"type": "integer"},
+            "dy": {"type": "integer"},
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        target = _target_from(arguments)
+        dx = arguments.get("dx", 0)
+        dy = arguments.get("dy", 0)
+        if target is None and not dx and not dy:
+            dy = 600  # a plain "scroll" means one page down
+        return self._call(
+            self.controller.scroll_page,
+            dx=dx,
+            dy=dy,
+            target=target,
+            tab_id=arguments.get("tab_id"),
+        )
+
+
 def create_browser_tools(
     controller: BrowserController,
 ) -> list[Tool]:
@@ -266,6 +525,14 @@ def create_browser_tools(
         BrowserForwardTool(controller),
         BrowserReloadTool(controller),
         BrowserShutdownTool(controller),
+        BrowserFindElementsTool(controller),
+        BrowserInspectElementTool(controller),
+        BrowserClickTool(controller),
+        BrowserTypeTool(controller),
+        BrowserClearTool(controller),
+        BrowserSelectOptionTool(controller),
+        BrowserPressKeyTool(controller),
+        BrowserScrollTool(controller),
     ]
 
 

@@ -21,6 +21,7 @@ from afnan_ai.browser.base import (
     BrowserError,
     BrowserErrorCode,
     BrowserException,
+    ElementInfo,
     PageState,
     TabInfo,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "BrowserError",
     "BrowserErrorCode",
     "BrowserException",
+    "ElementInfo",
     "PageState",
     "PlaywrightBackend",
     "TabInfo",

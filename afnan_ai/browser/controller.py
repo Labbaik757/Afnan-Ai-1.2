@@ -31,12 +31,16 @@ from afnan_ai.browser.backend import (
 from afnan_ai.browser.base import (
     BrowserErrorCode,
     BrowserException,
+    ElementInfo,
     PageState,
     TabInfo,
 )
 from afnan_ai.log_config import get_logger
 
 logger = get_logger(__name__)
+
+#: locator strategies, most stable/specific first
+_LOCATOR_KEYS = ("selector", "test_id", "label", "placeholder", "role", "text", "name")
 
 
 @dataclass
@@ -55,6 +59,8 @@ class BrowserController:
     :meth:`connect` first.
     """
 
+    DEFAULT_TIMEOUT_MS = 5000
+
     def __init__(
         self,
         backend: BrowserBackend | None = None,
@@ -71,6 +77,12 @@ class BrowserController:
         self._tabs: dict[str, _Tab] = {}
         self._active_tab_id: str | None = None
         self._counter = 0
+        # element references issued by find_elements, per page
+        # generation: a ref dies (stale_element) when its page
+        # navigates or reloads
+        self._elements: dict[str, dict[str, Any]] = {}
+        self._element_counter = 0
+        self._generations: dict[str, int] = {}
 
     # -- introspection ----------------------------------------------------
     @property
@@ -156,6 +168,8 @@ class BrowserController:
         """Close all tabs and the browser.  Safe to call anytime."""
         was_running = self._running
         self._tabs.clear()
+        self._elements.clear()
+        self._generations.clear()
         self._active_tab_id = None
         self._running = False
         self._endpoint = None
@@ -182,6 +196,7 @@ class BrowserController:
         self._counter += 1
         tab = _Tab(tab_id=f"tab_{self._counter}", handle=handle)
         self._tabs[tab.tab_id] = tab
+        self._generations[tab.tab_id] = 0
         self._active_tab_id = tab.tab_id
         if url:
             self._goto(tab, url)
@@ -214,6 +229,12 @@ class BrowserController:
                 details={"tab_id": tab.tab_id},
             ) from e
         del self._tabs[tab.tab_id]
+        self._generations.pop(tab.tab_id, None)
+        self._elements = {
+            ref: rec
+            for ref, rec in self._elements.items()
+            if rec["tab_id"] != tab.tab_id
+        }
         if self._active_tab_id == tab.tab_id:
             self._active_tab_id = (
                 next(reversed(self._tabs)) if self._tabs else None
@@ -251,6 +272,9 @@ class BrowserController:
                 code=BrowserErrorCode.OPERATION_FAILED,
                 details={"tab_id": tab.tab_id},
             ) from e
+        self._generations[tab.tab_id] = (
+            self._generations.get(tab.tab_id, 0) + 1
+        )
         return self.current_page(tab.tab_id)
 
     # -- page state -------------------------------------------------------------
@@ -269,6 +293,424 @@ class BrowserController:
 
     def current_url(self, tab_id: str | None = None) -> str:
         return self.current_page(tab_id)["url"]
+
+    # -- element interaction ------------------------------------------------
+    # Every interaction validates its target first: the element
+    # must exist, belong to the current page (not stale), and be
+    # usable for the action (visible/enabled/editable/...).  A
+    # *target* is {"ref": "el_1"} (from find_elements) or
+    # {"locator": {...}} / a plain locator dict with one or more of
+    # selector / test_id / label / placeholder / role(+name) / text.
+    def find_elements(
+        self,
+        locator: dict[str, Any] | None = None,
+        *,
+        tab_id: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Find elements matching *locator* and return their
+        identities + basic properties (each with a usable ref)."""
+        tab = self._resolve_tab(tab_id)
+        locator = self._validate_locator(locator)
+        handles = self._query(tab, locator, limit)
+        if not handles:
+            raise BrowserException(
+                f"No element matches locator {locator} on tab "
+                f"{tab.tab_id!r}",
+                code=BrowserErrorCode.ELEMENT_NOT_FOUND,
+                details={"locator": locator, "tab_id": tab.tab_id},
+            )
+        return [self._register_element(tab, h).to_dict() for h in handles]
+
+    def inspect_element(
+        self,
+        target: dict[str, Any] | None = None,
+        *,
+        tab_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Read one element's identity and basic properties."""
+        tab, record, info = self._prepare_interaction(tab_id, target)
+        return info.to_dict()
+
+    def click(
+        self,
+        target: dict[str, Any] | None = None,
+        *,
+        tab_id: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Validate and click the target element."""
+        tab, record, info = self._prepare_interaction(tab_id, target)
+        self._require_usable(info, "click")
+        self._do(
+            lambda: self._backend.click_element(
+                tab.handle, record["handle"], self._timeout(timeout_ms)
+            ),
+            "click",
+            record,
+        )
+        return self._interaction_result(tab, "click", info)
+
+    def type_text(
+        self,
+        target: dict[str, Any] | None,
+        text: str,
+        *,
+        tab_id: str | None = None,
+        clear_first: bool = False,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Type *text* into an input/textarea (optionally clearing
+        it first)."""
+        tab, record, info = self._prepare_interaction(tab_id, target)
+        self._require_usable(info, "type into")
+        if not info.editable:
+            raise BrowserException(
+                f"Element {info.ref} (<{info.tag}>) is not an "
+                "editable field; cannot type into it",
+                code=BrowserErrorCode.INVALID_ELEMENT,
+                details={"ref": info.ref, "tag": info.tag},
+            )
+        if clear_first:
+            self._do(
+                lambda: self._backend.clear_element(
+                    tab.handle, record["handle"], self._timeout(timeout_ms)
+                ),
+                "clear",
+                record,
+            )
+        self._do(
+            lambda: self._backend.fill_element(
+                tab.handle, record["handle"], text, self._timeout(timeout_ms)
+            ),
+            "type into",
+            record,
+        )
+        result = self._interaction_result(tab, "type", info)
+        result["value"] = text
+        return result
+
+    def clear_field(
+        self,
+        target: dict[str, Any] | None = None,
+        *,
+        tab_id: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Clear an input/textarea's current value."""
+        tab, record, info = self._prepare_interaction(tab_id, target)
+        self._require_usable(info, "clear")
+        if not info.editable:
+            raise BrowserException(
+                f"Element {info.ref} (<{info.tag}>) is not an "
+                "editable field; cannot clear it",
+                code=BrowserErrorCode.INVALID_ELEMENT,
+                details={"ref": info.ref, "tag": info.tag},
+            )
+        self._do(
+            lambda: self._backend.clear_element(
+                tab.handle, record["handle"], self._timeout(timeout_ms)
+            ),
+            "clear",
+            record,
+        )
+        return self._interaction_result(tab, "clear", info)
+
+    def select_option(
+        self,
+        target: dict[str, Any] | None,
+        value: str,
+        *,
+        tab_id: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Select *value* in a <select> dropdown element."""
+        tab, record, info = self._prepare_interaction(tab_id, target)
+        self._require_usable(info, "select an option in")
+        if info.tag != "select":
+            raise BrowserException(
+                f"Element {info.ref} is a <{info.tag}>, not a "
+                "<select>; cannot select an option in it",
+                code=BrowserErrorCode.INVALID_ELEMENT,
+                details={"ref": info.ref, "tag": info.tag},
+            )
+        self._do(
+            lambda: self._backend.select_option(
+                tab.handle, record["handle"], value,
+                self._timeout(timeout_ms),
+            ),
+            "select option in",
+            record,
+        )
+        result = self._interaction_result(tab, "select_option", info)
+        result["value"] = value
+        return result
+
+    def press_key(
+        self,
+        key: str,
+        target: dict[str, Any] | None = None,
+        *,
+        tab_id: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Press a keyboard key (e.g. "Enter", "Tab", "Escape",
+        "Control+A") on an element, or on the page when no target
+        is given."""
+        if not key or not str(key).strip():
+            raise BrowserException(
+                "A non-empty key (e.g. 'Enter', 'Tab', 'Escape') "
+                "is required",
+                code=BrowserErrorCode.OPERATION_FAILED,
+            )
+        tab = self._resolve_tab(tab_id)
+        element_handle = None
+        info = None
+        if target:
+            _, record, info = self._prepare_interaction(tab_id, target)
+            element_handle = record["handle"]
+        self._do(
+            lambda: self._backend.press_key(
+                tab.handle, element_handle, str(key),
+                self._timeout(timeout_ms),
+            ),
+            "press key",
+            {"ref": info.ref if info else None},
+        )
+        result = {"action": "press_key", "key": str(key)}
+        if info is not None:
+            result["element"] = info.to_dict()
+        result["page"] = self.current_page(tab.tab_id)
+        return result
+
+    def scroll_page(
+        self,
+        *,
+        dx: int = 0,
+        dy: int = 0,
+        target: dict[str, Any] | None = None,
+        tab_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Scroll the page by (dx, dy), or scroll an element into
+        view when *target* is given."""
+        if target:
+            tab, record, info = self._prepare_interaction(tab_id, target)
+            self._do(
+                lambda: self._backend.scroll_to_element(
+                    tab.handle, record["handle"]
+                ),
+                "scroll to",
+                record,
+            )
+            result = self._interaction_result(tab, "scroll_to", info)
+            return result
+        tab = self._resolve_tab(tab_id)
+        self._do(
+            lambda: self._backend.scroll_page(tab.handle, int(dx), int(dy)),
+            "scroll page",
+            {"ref": None},
+        )
+        return {
+            "action": "scroll",
+            "dx": int(dx),
+            "dy": int(dy),
+            "page": self.current_page(tab.tab_id),
+        }
+
+    # -- element internals ------------------------------------------------
+    @staticmethod
+    def _validate_locator(
+        locator: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        locator = dict(locator or {})
+        strategies = {
+            k: locator[k]
+            for k in ("selector", "test_id", "label", "placeholder", "role", "text")
+            if locator.get(k)
+        }
+        if locator.get("role") and locator.get("name"):
+            strategies["name"] = locator["name"]
+        if not strategies:
+            raise BrowserException(
+                "A locator needs at least one of: selector, "
+                "test_id, label, placeholder, role or text",
+                code=BrowserErrorCode.INVALID_LOCATOR,
+                details={"locator": locator},
+            )
+        return strategies
+
+    @staticmethod
+    def _split_target(
+        target: dict[str, Any] | None,
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """(ref, locator) from a target dict; either may be None."""
+        if not target:
+            return None, None
+        ref = target.get("ref")
+        if ref:
+            return str(ref), None
+        if isinstance(target.get("locator"), dict):
+            return None, dict(target["locator"])
+        # a bare locator dict is accepted too
+        if any(k in target for k in _LOCATOR_KEYS):
+            return None, dict(target)
+        return None, None
+
+    def _query(self, tab: _Tab, locator: dict[str, Any], limit: int):
+        try:
+            return self._backend.query_elements(
+                tab.handle, locator, max(1, min(int(limit), 50))
+            )
+        except BrowserException:
+            raise
+        except Exception as e:
+            raise BrowserException(
+                f"Element lookup failed: {e}",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"locator": locator, "tab_id": tab.tab_id},
+            ) from e
+
+    def _register_element(self, tab: _Tab, handle) -> ElementInfo:
+        self._element_counter += 1
+        ref = f"el_{self._element_counter}"
+        record = {
+            "ref": ref,
+            "tab_id": tab.tab_id,
+            "handle": handle,
+            "generation": self._generations.get(tab.tab_id, 0),
+        }
+        self._elements[ref] = record
+        return self._read_info(tab, record)
+
+    def _read_info(self, tab: _Tab, record: dict[str, Any]) -> ElementInfo:
+        try:
+            data = self._backend.element_info(tab.handle, record["handle"])
+        except BrowserException:
+            raise
+        except Exception as e:
+            raise BrowserException(
+                f"Could not read element {record['ref']}: {e}",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"ref": record["ref"]},
+            ) from e
+        return ElementInfo(
+            ref=record["ref"],
+            tab_id=tab.tab_id,
+            tag=str(data.get("tag", "")),
+            text=str(data.get("text", "")),
+            attributes=dict(data.get("attributes", {})),
+            visible=bool(data.get("visible", True)),
+            enabled=bool(data.get("enabled", True)),
+            editable=bool(data.get("editable", False)),
+            value=str(data.get("value", "")),
+        )
+
+    def _resolve_element(self, tab: _Tab, target):
+        """Validate a target and return (tab, element record).
+
+        Refs from an older page generation are rejected as stale;
+        locators are resolved fresh against the live page.
+        """
+        ref, locator = self._split_target(target)
+        if ref is not None:
+            record = self._elements.get(ref)
+            if record is None or record["tab_id"] != tab.tab_id:
+                raise BrowserException(
+                    f"Unknown element reference {ref!r} for tab "
+                    f"{tab.tab_id!r}; find the element again",
+                    code=BrowserErrorCode.INVALID_ELEMENT,
+                    details={"ref": ref, "tab_id": tab.tab_id},
+                )
+            if record["generation"] != self._generations.get(tab.tab_id, 0):
+                raise BrowserException(
+                    f"Element {ref} belongs to an older version of "
+                    "the page (the page changed since it was "
+                    "found); find it again before interacting",
+                    code=BrowserErrorCode.STALE_ELEMENT,
+                    details={"ref": ref, "tab_id": tab.tab_id},
+                )
+            return tab, record
+        if locator is not None:
+            locator = self._validate_locator(locator)
+            handles = self._query(tab, locator, 1)
+            if not handles:
+                raise BrowserException(
+                    f"No element matches locator {locator} on tab "
+                    f"{tab.tab_id!r}",
+                    code=BrowserErrorCode.ELEMENT_NOT_FOUND,
+                    details={"locator": locator, "tab_id": tab.tab_id},
+                )
+            record = {
+                "ref": f"el_{self._element_counter + 1}",
+                "tab_id": tab.tab_id,
+                "handle": handles[0],
+                "generation": self._generations.get(tab.tab_id, 0),
+            }
+            self._element_counter += 1
+            self._elements[record["ref"]] = record
+            return tab, record
+        raise BrowserException(
+            "An interaction target is required: a ref from "
+            "browser_find_elements or a locator (selector / role / "
+            "text / label / placeholder / test_id)",
+            code=BrowserErrorCode.INVALID_LOCATOR,
+        )
+
+    def _prepare_interaction(self, tab_id, target):
+        tab = self._resolve_tab(tab_id)
+        tab, record = self._resolve_element(tab, target)
+        info = self._read_info(tab, record)
+        return tab, record, info
+
+    @staticmethod
+    def _require_usable(info: ElementInfo, action: str) -> None:
+        if not info.visible:
+            raise BrowserException(
+                f"Element {info.ref} (<{info.tag}>) is not "
+                f"visible; refusing to {action} it",
+                code=BrowserErrorCode.INVALID_ELEMENT,
+                details={"ref": info.ref, "tag": info.tag},
+            )
+        if not info.enabled:
+            raise BrowserException(
+                f"Element {info.ref} (<{info.tag}>) is disabled; "
+                f"refusing to {action} it",
+                code=BrowserErrorCode.INVALID_ELEMENT,
+                details={"ref": info.ref, "tag": info.tag},
+            )
+
+    def _do(self, operation, action: str, record) -> None:
+        try:
+            operation()
+        except BrowserException:
+            raise
+        except Exception as e:
+            raise BrowserException(
+                f"Browser failed to {action}: {e}",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"ref": record.get("ref") if record else None},
+            ) from e
+
+    def _interaction_result(
+        self, tab: _Tab, action: str, info: ElementInfo
+    ) -> dict[str, Any]:
+        logger.info(
+            "browser %s on %s (tab %s)", action, info.ref, tab.tab_id
+        )
+        return {
+            "action": action,
+            "element": self._read_info(
+                tab, self._elements[info.ref]
+            ).to_dict()
+            if info.ref in self._elements
+            else info.to_dict(),
+            "page": self.current_page(tab.tab_id),
+        }
+
+    def _timeout(self, timeout_ms: int | None) -> int:
+        if timeout_ms is None:
+            return self.DEFAULT_TIMEOUT_MS
+        return max(1, int(timeout_ms))
 
     # -- internals -------------------------------------------------------------
     def _session_info(self, *, launched: bool) -> dict[str, Any]:
@@ -327,6 +769,10 @@ class BrowserController:
                 code=BrowserErrorCode.NAVIGATION_FAILED,
                 details={"url": url, "tab_id": tab.tab_id},
             ) from e
+        # the page changed: element refs from before are now stale
+        self._generations[tab.tab_id] = (
+            self._generations.get(tab.tab_id, 0) + 1
+        )
         self._refresh(tab)
 
     @staticmethod
@@ -354,6 +800,9 @@ class BrowserController:
                 code=BrowserErrorCode.OPERATION_FAILED,
                 details={"tab_id": tab.tab_id},
             ) from e
+        self._generations[tab.tab_id] = (
+            self._generations.get(tab.tab_id, 0) + 1
+        )
         return self.current_page(tab.tab_id)
 
     def _refresh(self, tab: _Tab, *, quiet: bool = False) -> None:

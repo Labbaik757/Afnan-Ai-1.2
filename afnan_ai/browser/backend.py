@@ -83,6 +83,61 @@ class BrowserBackend(ABC):
     def stop(self) -> None:
         """Close the browser and release the driver."""
 
+    # -- element interaction -------------------------------------------------
+    # These have safe defaults (a structured "not supported" error)
+    # so simple backends/fakes stay valid; real backends override
+    # them.  ``locator`` is a dict of lookup strategies, e.g.
+    # {"selector": "#login"} or {"role": "button", "name": "Sign in"}
+    # or {"text": "Sign in"} — most specific first.
+    def _unsupported(self, operation: str):
+        raise BrowserException(
+            f"Browser backend {self.name!r} does not support {operation}",
+            code=BrowserErrorCode.OPERATION_FAILED,
+        )
+
+    def query_elements(
+        self, handle: Any, locator: dict[str, Any], limit: int
+    ) -> list[Any]:
+        self._unsupported("element lookup")
+
+    def element_info(self, handle: Any, element: Any) -> dict[str, Any]:
+        self._unsupported("element inspection")
+
+    def click_element(
+        self, handle: Any, element: Any, timeout_ms: int
+    ) -> None:
+        self._unsupported("clicking")
+
+    def fill_element(
+        self, handle: Any, element: Any, text: str, timeout_ms: int
+    ) -> None:
+        self._unsupported("typing")
+
+    def clear_element(
+        self, handle: Any, element: Any, timeout_ms: int
+    ) -> None:
+        self._unsupported("clearing")
+
+    def select_option(
+        self, handle: Any, element: Any, value: str, timeout_ms: int
+    ) -> None:
+        self._unsupported("selecting an option")
+
+    def press_key(
+        self,
+        handle: Any,
+        element: Any | None,
+        key: str,
+        timeout_ms: int,
+    ) -> None:
+        self._unsupported("keyboard actions")
+
+    def scroll_page(self, handle: Any, dx: int, dy: int) -> None:
+        self._unsupported("scrolling")
+
+    def scroll_to_element(self, handle: Any, element: Any) -> None:
+        self._unsupported("scrolling to an element")
+
 
 class PlaywrightBackend(BrowserBackend):
     """Real browser control via Playwright (sync API).
@@ -219,3 +274,155 @@ class PlaywrightBackend(BrowserBackend):
 
     def page_title(self, handle: Any) -> str:
         return handle.title() or ""
+
+    # -- element interaction (Playwright) --------------------------------
+    # Locator strategies, most stable/specific first.  A locator
+    # dict may carry several; the first that matches anything wins.
+    _LOCATOR_ORDER = ("selector", "test_id", "label", "placeholder", "role", "text")
+
+    def _locators(self, page, locator: dict[str, Any]):
+        candidates = []
+        for key in self._LOCATOR_ORDER:
+            if locator.get(key) is None:
+                continue
+            if key == "selector":
+                candidates.append(page.locator(str(locator["selector"])))
+            elif key == "test_id":
+                candidates.append(page.get_by_test_id(str(locator["test_id"])))
+            elif key == "label":
+                candidates.append(page.get_by_label(str(locator["label"])))
+            elif key == "placeholder":
+                candidates.append(
+                    page.get_by_placeholder(str(locator["placeholder"]))
+                )
+            elif key == "role":
+                kwargs = {}
+                if locator.get("name"):
+                    kwargs["name"] = str(locator["name"])
+                candidates.append(
+                    page.get_by_role(str(locator["role"]), **kwargs)
+                )
+            elif key == "text":
+                candidates.append(page.get_by_text(str(locator["text"])))
+        return candidates
+
+    def query_elements(
+        self, handle: Any, locator: dict[str, Any], limit: int
+    ) -> list[Any]:
+        for candidate in self._locators(handle, locator):
+            try:
+                count = candidate.count()
+            except Exception:
+                continue
+            if count:
+                handles = []
+                for i in range(min(count, max(limit, 1))):
+                    element_handle = candidate.nth(i).element_handle()
+                    if element_handle is not None:
+                        handles.append(element_handle)
+                if handles:
+                    return handles
+        return []
+
+    def element_info(self, handle: Any, element: Any) -> dict[str, Any]:
+        try:
+            data = element.evaluate(
+                """el => {
+                    const attrs = {};
+                    for (const name of ['id','name','type','role','aria-label',
+                                        'placeholder','href','value','title']) {
+                        const v = el.getAttribute(name);
+                        if (v !== null) attrs[name] = v;
+                    }
+                    const text = (el.innerText || el.textContent || '')
+                        .trim().replace(/\\s+/g, ' ').slice(0, 200);
+                    const editable = !!el.isContentEditable ||
+                        ['INPUT','TEXTAREA','SELECT'].includes(el.tagName);
+                    return {
+                        tag: el.tagName.toLowerCase(),
+                        text: text,
+                        attributes: attrs,
+                        editable: editable,
+                        value: (el.value !== undefined && el.value !== null)
+                            ? String(el.value).slice(0, 200) : ''
+                    };
+                }"""
+            )
+            data["visible"] = bool(element.is_visible())
+            data["enabled"] = bool(element.is_enabled())
+            return data
+        except Exception as e:
+            raise self._driver_error(e, "inspect element") from e
+
+    def click_element(self, handle: Any, element: Any, timeout_ms: int) -> None:
+        try:
+            element.click(timeout=timeout_ms)
+        except Exception as e:
+            raise self._driver_error(e, "click element") from e
+
+    def fill_element(
+        self, handle: Any, element: Any, text: str, timeout_ms: int
+    ) -> None:
+        try:
+            element.fill(text, timeout=timeout_ms)
+        except Exception as e:
+            raise self._driver_error(e, "type into element") from e
+
+    def clear_element(self, handle: Any, element: Any, timeout_ms: int) -> None:
+        try:
+            element.fill("", timeout=timeout_ms)
+        except Exception as e:
+            raise self._driver_error(e, "clear element") from e
+
+    def select_option(
+        self, handle: Any, element: Any, value: str, timeout_ms: int
+    ) -> None:
+        try:
+            element.select_option(value=value, timeout=timeout_ms)
+        except Exception as e:
+            raise self._driver_error(e, "select option") from e
+
+    def press_key(
+        self, handle: Any, element: Any | None, key: str, timeout_ms: int
+    ) -> None:
+        try:
+            if element is not None:
+                element.press(key, timeout=timeout_ms)
+            else:
+                handle.keyboard.press(key)
+        except Exception as e:
+            raise self._driver_error(e, "press key") from e
+
+    def scroll_page(self, handle: Any, dx: int, dy: int) -> None:
+        try:
+            handle.mouse.wheel(dx, dy)
+        except Exception as e:
+            raise self._driver_error(e, "scroll page") from e
+
+    def scroll_to_element(self, handle: Any, element: Any) -> None:
+        try:
+            element.scroll_into_view_if_needed()
+        except Exception as e:
+            raise self._driver_error(e, "scroll to element") from e
+
+    @staticmethod
+    def _driver_error(e: Exception, context: str) -> BrowserException:
+        """Map a raw Playwright failure to a structured error."""
+        name = type(e).__name__
+        message = str(e)
+        if name == "TimeoutError" or "timeout" in message.lower():
+            return BrowserException(
+                f"Timed out while trying to {context}: {message}",
+                code=BrowserErrorCode.TIMEOUT,
+            )
+        lowered = message.lower()
+        if "not attached" in lowered or "detached" in lowered:
+            return BrowserException(
+                f"Element is no longer attached to the page "
+                f"({context}): {message}",
+                code=BrowserErrorCode.STALE_ELEMENT,
+            )
+        return BrowserException(
+            f"Browser failed to {context}: {message}",
+            code=BrowserErrorCode.OPERATION_FAILED,
+        )

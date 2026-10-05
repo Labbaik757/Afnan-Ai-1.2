@@ -17,6 +17,13 @@ Error codes:
 * ``invalid_tab`` — unknown tab id, or no tab is open
 * ``invalid_url`` — the URL is empty or unusable
 * ``navigation_failed`` — the browser could not load the page
+* ``element_not_found`` — no element matches the locator
+* ``invalid_locator`` — no usable way to find the element was given
+* ``invalid_element`` — element exists but cannot be used this way
+  (hidden, disabled, not editable, not a <select>, ...)
+* ``stale_element`` — the element reference belongs to an older
+  page (the page changed since it was found); find it again
+* ``timeout`` — the browser did not complete the action in time
 * ``operation_failed`` — any other browser-side failure
 """
 
@@ -34,6 +41,11 @@ class BrowserErrorCode(str, Enum):
     INVALID_TAB = "invalid_tab"
     INVALID_URL = "invalid_url"
     NAVIGATION_FAILED = "navigation_failed"
+    ELEMENT_NOT_FOUND = "element_not_found"
+    INVALID_LOCATOR = "invalid_locator"
+    INVALID_ELEMENT = "invalid_element"
+    STALE_ELEMENT = "stale_element"
+    TIMEOUT = "timeout"
     OPERATION_FAILED = "operation_failed"
 
 
@@ -111,4 +123,38 @@ class PageState:
             "tab_id": self.tab_id,
             "url": self.url,
             "title": self.title,
+        }
+
+
+@dataclass
+class ElementInfo:
+    """Identity and basic properties of one page element.
+
+    ``ref`` is the controller-issued reference (``el_1``, ``el_2``,
+    ...) that later interactions can target; it stays valid until
+    the page changes (navigation/reload), after which using it is
+    a structured ``stale_element`` error.
+    """
+
+    ref: str
+    tab_id: str
+    tag: str = ""
+    text: str = ""
+    attributes: dict[str, Any] = field(default_factory=dict)
+    visible: bool = True
+    enabled: bool = True
+    editable: bool = False
+    value: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ref": self.ref,
+            "tab_id": self.tab_id,
+            "tag": self.tag,
+            "text": self.text,
+            "attributes": dict(self.attributes),
+            "visible": bool(self.visible),
+            "enabled": bool(self.enabled),
+            "editable": bool(self.editable),
+            "value": self.value,
         }
