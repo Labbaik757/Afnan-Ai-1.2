@@ -1649,6 +1649,10 @@ class BrowserController:
         navigation, downloads, errors...)."""
         return self.runtime.events(limit)
 
+    def runtime_health(self) -> dict[str, Any]:
+        """Structured health of the browser runtime/engine."""
+        return self.runtime.health()
+
     def recover_browser(self) -> dict[str, Any]:
         """Restart a crashed browser engine via the runtime and
         report which tabs are recoverable (never auto-reopens
