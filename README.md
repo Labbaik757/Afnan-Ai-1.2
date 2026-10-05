@@ -990,6 +990,45 @@ progress against the linked goal.  Entry points:
 `get_task_manager()` / `get_task_worker()` (and the `main`
 delegates).  Tests: `tests/test_memory_goals_tasks.py`.
 
+## Background execution and scheduling
+
+`afnan_ai/scheduler.py` + `afnan_ai/background_runner.py`
+turn the persistent queue into a Muse-style background
+agent:
+
+- **TaskScheduler** is pure-stdlib and platform-independent
+  (Windows/Linux/macOS identical): one-time and recurring
+  (`interval` seconds, `daily` at a time of day, `weekly`
+  on a weekday) schedules, all UTC, advancing from their
+  scheduled time so missed occurrences never burst.  A due
+  schedule simply creates a pending TaskManager task —
+  execution always goes through the runner and AgentLoop.
+- **BackgroundTaskRunner** claims tasks and runs each
+  through a *fresh* AgentLoop (per-task isolation),
+  forwarding loop events into a redacted JSONL audit trail
+  (`audit.jsonl`; secrets are scrubbed by the shared
+  redactor before anything is written).  Human approval is
+  inherited, never bypassed: approval-needed outcomes park
+  the task as `waiting_for_approval`; per-task timeout/step
+  budgets become LoopLimits; the TaskManager retry budget
+  and the loop's stall guards prevent blind repetition.
+- **Crash/restart recovery:** on start, tasks left
+  `running` by a dead process are recovered and re-queued
+  with their checkpoint reference, so the loop resumes from
+  the last valid checkpoint (checksum-invalid checkpoints
+  are detected and the task starts fresh, noted in the
+  audit trail).  Completed steps are never re-executed.
+- Nothing runs on its own: `start_background_runner()` is
+  an explicit opt-in, `process_available()` drains the
+  queue synchronously (tests, cron-style use), and
+  `stop_background_runner()` shuts down cleanly.  Entry
+  points: `agent.get_scheduler()` / `get_background_runner()`
+  / `start_background_runner()` / `stop_background_runner()`
+  (and the `main` delegates).  Notification, webhook,
+  email/calendar-trigger and cloud-worker integrations plug
+  in at the scheduler/runner event seam.  Tests:
+  `tests/test_background_scheduler.py`.
+
 ## Autonomous browser workflow
 
 `run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,
