@@ -106,6 +106,7 @@ class AfnanAgent:
         connector_approver=None,
         enable_connector_tools: bool = True,
         connector_credentials=None,
+        context_budget=None,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -304,6 +305,19 @@ class AfnanAgent:
         )
         self._task_worker = None
         self._background_runner = None
+        # Long-context & trajectory reasoning: the per-task
+        # TrajectoryStore persists every run's trajectory
+        # (observations, decisions, actions, verifications,
+        # recoveries, approvals, checkpoints) for restart
+        # recovery; each AgentLoop run gets a fresh
+        # ContextManager that keeps the unified working
+        # context inside a configurable budget.
+        from afnan_ai.context.trajectory import TrajectoryStore
+
+        self._context_budget = context_budget
+        self.trajectory_store = TrajectoryStore(
+            str(memory_base / "trajectories.json")
+        )
         # Connector System: external services (email, calendar,
         # cloud storage, chat, ...) through a registry of
         # self-contained Connector implementations.  The agent
@@ -736,6 +750,12 @@ class AfnanAgent:
         """A fresh AgentLoop (background tasks each get their
         own so concurrent runs stay isolated)."""
         from afnan_ai.agent_loop import AgentLoop
+        from afnan_ai.context.manager import ContextManager
+
+        budget = self._context_budget
+
+        def _context_factory():
+            return ContextManager(budget=budget)
 
         return AgentLoop(
             self.orchestrator,
@@ -747,6 +767,8 @@ class AfnanAgent:
                 if self.connector_service is not None
                 else None
             ),
+            context_manager_factory=_context_factory,
+            trajectory_store=self.trajectory_store,
         )
 
     def run_agent_loop(self, goal, *, state=None, resume_from=None,
@@ -808,6 +830,12 @@ class AfnanAgent:
         refusal: they do not run without a human yes)."""
         if self.connector_service is not None:
             self.connector_service.set_approver(approver)
+
+    # -- long-context & trajectory reasoning ------------------
+    def get_trajectory_store(self):
+        """The persistent per-task TrajectoryStore (restart
+        recovery for execution trajectories)."""
+        return self.trajectory_store
 
     # -- persistent memory / goals / tasks --------------------------
     def get_memory_store(self):
