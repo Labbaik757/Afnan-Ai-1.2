@@ -171,6 +171,61 @@ def main() -> int:
     else:
         print("OK: recovery only replans via Planner, never executes tools")
 
+    # The browser tools must be creatable without launching a real
+    # browser, and browser driver code must stay inside the
+    # browser package (core modules never import it directly).
+    try:
+        from afnan_ai.browser import BrowserController, create_browser_tools
+        from afnan_ai.browser.backend import BrowserBackend
+
+        class _StubBackend(BrowserBackend):
+            name = "stub"
+            def start(self, browser, headless): pass
+            def connect(self, endpoint): pass
+            def new_page(self): return object()
+            def close_page(self, handle): pass
+            def goto(self, handle, url): pass
+            def go_back(self, handle): pass
+            def go_forward(self, handle): pass
+            def reload(self, handle): pass
+            def page_url(self, handle): return ""
+            def page_title(self, handle): return ""
+            def stop(self): pass
+
+        browser_tool_names = sorted(
+            t.name
+            for t in create_browser_tools(
+                BrowserController(backend=_StubBackend())
+            )
+        )
+        expected_browser_tools = {
+            "browser_launch", "browser_connect", "browser_new_tab",
+            "browser_list_tabs", "browser_select_tab",
+            "browser_close_tab", "browser_navigate",
+            "browser_current_page", "browser_back",
+            "browser_forward", "browser_reload", "browser_shutdown",
+        }
+        if set(browser_tool_names) != expected_browser_tools:
+            failures.append(f"browser tools mismatch: {browser_tool_names}")
+            print(f"FAIL: browser tools are {browser_tool_names}")
+        else:
+            print(f"OK: browser tools are {browser_tool_names}")
+    except Exception as e:
+        failures.append(f"browser tools check crashed: {e}")
+        print(f"FAIL: browser tools check crashed: {e}")
+
+    driver_importers = []
+    for py_file in (ROOT / "afnan_ai").rglob("*.py"):
+        if "browser" in py_file.parts:
+            continue
+        if "playwright" in py_file.read_text(encoding="utf-8"):
+            driver_importers.append(str(py_file.relative_to(ROOT)))
+    if driver_importers:
+        failures.append(f"playwright leaked outside browser package: {driver_importers}")
+        print(f"FAIL: playwright used outside afnan_ai/browser: {driver_importers}")
+    else:
+        print("OK: browser driver code isolated in afnan_ai/browser")
+
     for path in sorted(ROOT.rglob("*.py")):
         if ".git" in path.parts or "__pycache__" in path.parts:
             continue

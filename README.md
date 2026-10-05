@@ -170,6 +170,13 @@ Afnan-Ai-1.2
 │   ├── config.py            (AgentConfig — wake word, limits,
 │   │                         default model; env overridable)
 │   ├── log_config.py        (structured logging, stdlib only)
+│   ├── browser/             (BrowserController — launch/connect,
+│   │   │                     tabs, navigation, page state, shutdown)
+│   │   ├── base.py          (tab/page types + structured errors)
+│   │   ├── backend.py       (BrowserBackend interface +
+│   │   │                     PlaywrightBackend)
+│   │   ├── controller.py    (session/tab management, validation)
+│   │   └── tools.py         (browser_* Tools for the registry)
 │   ├── llm/
 │   │   ├── base.py          (LLMProvider interface + typed errors)
 │   │   ├── ollama.py        (OllamaProvider — local Ollama, llama3)
@@ -601,6 +608,49 @@ iteration cap live in `tests/test_recovery.py`; voice-independent
 Agent invocation and entry-point/backward-compatibility
 integration tests live in `tests/test_entry_points.py`.
 
+# 🌐 BrowserController — Programmatic Browser Control (Phase 2)
+
+`afnan_ai/browser/` is a modular browser-control system that
+works the same on Windows, macOS and Linux:
+
+- **`BrowserController`** owns a browser session: launch or
+  connect (CDP), create/select/close tabs, navigate by URL,
+  back/forward/reload, read the current page state (URL + title),
+  and shut down.  Navigating with no tab open creates one.
+- **`BrowserBackend`** is the driver boundary.  The shipped
+  `PlaywrightBackend` drives Chromium/Chrome/Edge/Firefox/WebKit
+  via Playwright (lazily imported — installing nothing is fine
+  until a browser actually launches).  Tests and other hosts can
+  inject any backend without touching controller or agent code.
+- **Tools** — every operation is a registry Tool (`browser_launch`,
+  `browser_connect`, `browser_new_tab`, `browser_list_tabs`,
+  `browser_select_tab`, `browser_close_tab`, `browser_navigate`,
+  `browser_current_page`, `browser_back`, `browser_forward`,
+  `browser_reload`, `browser_shutdown`), registered on the agent's
+  ToolRegistry by default, so the Planner can plan browser tasks
+  and the Executor runs them like any other capability.  Disable
+  with `AfnanAgent(..., enable_browser_tools=False)`.
+- **Structured errors only** — browser unavailable (install with
+  `pip install playwright` + `playwright install chromium`),
+  connection failed, browser not started, invalid tab and
+  navigation failures all come back as
+  ``ToolResult(success=False)`` with the browser error code in
+  `error.details["browser_error"]["code"]`; nothing crashes and
+  nothing silently "succeeds".
+
+```python
+agent.execute_tool("browser_launch", {})
+agent.execute_tool("browser_navigate", {"url": "https://example.com"})
+page = agent.execute_tool("browser_current_page", {})
+page.output  # {"tab_id": "tab_1", "url": "https://example.com/", "title": "Example Domain"}
+```
+
+Unit tests (fake in-memory backend) live in
+`tests/test_browser_controller.py`; registry/Agent integration
+tests live in `tests/test_browser_tools.py`;
+`tools/check_compatibility.py` verifies the browser tools exist
+and that driver code stays inside `afnan_ai/browser/`.
+
 # 🏁 Phase 1 Status — Clean, Tested, Cross-Platform
 
 Phase 1 (the core agent architecture) is complete and verified
@@ -628,9 +678,10 @@ end to end:
   and `requirements.txt` contains only what the code imports or
   a feature requires.
 
-The project is ready for Phase 2: browser / computer-use agent
-development on top of the Tool system, with new capabilities
-added as registered Tools without touching the core pipeline.
+Phase 2 (browser / computer-use agent development) builds on
+this foundation: new capabilities are added as registered Tools
+without touching the core pipeline, starting with the
+BrowserController above.
 
 # ✅ Compatibility Tests
 
