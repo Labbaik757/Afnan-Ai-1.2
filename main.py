@@ -171,6 +171,13 @@ def get_screen_observer():
     return _agent.screen_observer
 
 
+def get_web_research():
+    """Return the WebResearch session (stored search results for
+    browser_search/browser_open_result), or None when browser
+    tools are disabled."""
+    return getattr(_agent.browser, "research_session", None)
+
+
 def get_approval_gate():
     """Return the browser ApprovalGate (sensitive-action policy
     plus recorded approval decisions)."""

@@ -19,6 +19,9 @@ from typing import Any
 
 from afnan_ai.browser.base import BrowserException
 from afnan_ai.browser.controller import BrowserController
+from afnan_ai.browser.extraction import clean_document
+from afnan_ai.browser.research import WebResearch
+from afnan_ai.browser.semantics import rank as rank_matches
 from afnan_ai.tools.base import Tool, ToolExecutionError
 
 
@@ -87,22 +90,34 @@ class BrowserNewTabTool(_BrowserTool):
     name = "browser_new_tab"
     description = (
         "Open a new browser tab (optionally at a URL) and make it "
-        "the active tab. Requires the browser to be launched."
+        "the active tab. Requires the browser to be launched. A "
+        "'purpose' labels why the task opened this tab, so "
+        "multi-tab work stays attributable."
     )
     input_schema = {
         "type": "object",
-        "properties": {"url": {"type": "string"}},
+        "properties": {
+            "url": {"type": "string"},
+            "purpose": {"type": "string"},
+        },
         "required": [],
         "additionalProperties": False,
     }
 
     def run(self, arguments: dict[str, Any]) -> Any:
-        return self._call(self.controller.new_tab, arguments.get("url"))
+        return self._call(
+            self.controller.new_tab,
+            arguments.get("url"),
+            purpose=arguments.get("purpose"),
+        )
 
 
 class BrowserListTabsTool(_BrowserTool):
     name = "browser_list_tabs"
-    description = "List all open browser tabs with their URLs and titles."
+    description = (
+        "List all open browser tabs with their URLs, titles and "
+        "task purposes, and which one is active."
+    )
     input_schema = {
         "type": "object",
         "properties": {},
@@ -111,7 +126,46 @@ class BrowserListTabsTool(_BrowserTool):
     }
 
     def run(self, arguments: dict[str, Any]) -> Any:
-        return {"tabs": self._call(self.controller.list_tabs)}
+        tabs = self._call(self.controller.list_tabs)
+        return {
+            "tabs": tabs,
+            "observation": {
+                "type": "tab_list",
+                "summary": "; ".join(
+                    f"{t['tab_id']} [{t.get('purpose') or 'no purpose'}] "
+                    f"{t['title'] or t['url']}"
+                    for t in tabs
+                ) or "No tabs open",
+                "count": len(tabs),
+            },
+        }
+
+
+class BrowserSetTabPurposeTool(_BrowserTool):
+    """Label a tab with its task-level purpose."""
+
+    name = "browser_set_tab_purpose"
+    description = (
+        "Label a browser tab with the purpose it serves in the "
+        "current task (e.g. 'pricing research'), so later steps "
+        "can identify the right tab before acting on it."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "tab_id": {"type": "string"},
+            "purpose": {"type": "string"},
+        },
+        "required": ["tab_id", "purpose"],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        return self._call(
+            self.controller.set_tab_purpose,
+            arguments["tab_id"],
+            arguments["purpose"],
+        )
 
 
 class BrowserSelectTabTool(_BrowserTool):
@@ -659,10 +713,227 @@ class BrowserUploadFileTool(_BrowserTool):
         )
 
 
+class BrowserAccessibilityTreeTool(_BrowserTool):
+    """Read the page's normalized accessibility tree."""
+
+    name = "browser_accessibility_tree"
+    description = (
+        "Read the current page's accessibility tree as structured "
+        "nodes (role, name, value, heading level) for buttons, "
+        "links, inputs, headings, menus and other elements. The "
+        "browser's accessibility tree is preferred; a DOM-derived "
+        "tree is returned when it is unavailable. Prefer this "
+        "over guessing from pixels."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {"tab_id": {"type": "string"}},
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        return self._call(
+            self.controller.accessibility_tree,
+            tab_id=arguments.get("tab_id"),
+        )
+
+
+class BrowserFindSemanticTool(_BrowserTool):
+    """Locate an element by natural-language description."""
+
+    name = "browser_find_semantic"
+    description = (
+        "Find page elements by description (e.g. 'Login button', "
+        "'Search field', 'Next page link') using the "
+        "accessibility tree and DOM metadata. Returns ranked "
+        "matches with confidence scores; matches below 0.5 "
+        "confidence carry no element reference and must not be "
+        "acted on automatically."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "description": {"type": "string"},
+            "tab_id": {"type": "string"},
+            "limit": {"type": "integer"},
+        },
+        "required": ["description"],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        tree = self._call(
+            self.controller.accessibility_tree,
+            tab_id=arguments.get("tab_id"),
+        )
+        ranked = rank_matches(arguments["description"], tree["nodes"])
+        limit = int(arguments.get("limit", 5))
+        matches = []
+        for match in ranked[:limit]:
+            entry = dict(match)
+            if entry["tier"] == "low":
+                # never hand out an actionable handle for a guess
+                entry["element_ref"] = None
+            matches.append(entry)
+        best = matches[0] if matches else None
+        uncertain = bool(best and best["tier"] != "actionable")
+        return {
+            "description": arguments["description"],
+            "matches": matches,
+            "best_confidence": best["confidence"] if best else 0.0,
+            "uncertain": uncertain,
+            "note": (
+                "Low-confidence matches have no element_ref and "
+                "must not be acted on automatically; verify or "
+                "ask first."
+                if uncertain else
+                "Top match is confident enough to act on via its "
+                "element_ref or locator."
+            ),
+        }
+
+
+class BrowserExtractContentTool(_BrowserTool):
+    """Extract clean, structured content from the current page."""
+
+    name = "browser_extract_content"
+    description = (
+        "Extract the current page's content in clean structured "
+        "form: headings, paragraphs, lists, links and tables "
+        "(row/column structure preserved), with boilerplate "
+        "filtered and long pages split into bounded chunks. "
+        "Pass chunk to read a specific chunk of a long page."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "tab_id": {"type": "string"},
+            "max_chars": {"type": "integer"},
+            "chunk": {"type": "integer"},
+        },
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        doc = self._call(
+            self.controller.page_document,
+            tab_id=arguments.get("tab_id"),
+        )
+        content = clean_document(
+            doc, max_chars=int(arguments.get("max_chars", 4000))
+        )
+        chunk_index = arguments.get("chunk")
+        if chunk_index is not None:
+            chunks = content["chunks"]
+            try:
+                chosen = chunks[int(chunk_index)]
+            except (IndexError, ValueError, TypeError):
+                chosen = None
+            content = {
+                **content,
+                "chunks": [chosen] if chosen else [],
+                "selected_chunk": (
+                    chosen["index"] if chosen else None
+                ),
+            }
+        content["observation"] = {
+            "type": "page_content",
+            "summary": (
+                f"Extracted content from {content['title'][:60]!r} "
+                f"({content['url']}): "
+                f"{content['counts']['headings']} headings, "
+                f"{content['counts']['paragraphs']} paragraphs, "
+                f"{content['counts']['lists']} lists, "
+                f"{content['counts']['tables']} tables, "
+                f"{content['chunk_count']} chunk(s), "
+                f"~{content['token_estimate']} tokens"
+            ),
+            "url": content["url"],
+            "counts": content["counts"],
+            "content_found": content["content_found"],
+        }
+        return content
+
+
+class BrowserSearchTool(_BrowserTool):
+    """Run a web search and extract structured results."""
+
+    name = "browser_search"
+    description = (
+        "Search the web (duckduckgo, google or bing) and return "
+        "structured results: rank, title, URL, snippet and "
+        "source. Results are remembered so browser_open_result "
+        "can open one by index. Navigates the current tab to "
+        "the results page."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "engine": {"type": "string",
+                       "enum": ["duckduckgo", "google", "bing"]},
+            "max_results": {"type": "integer"},
+            "tab_id": {"type": "string"},
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    }
+
+    def __init__(self, controller, research):
+        super().__init__(controller)
+        self.research = research
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        return self._call(
+            self.research.search,
+            arguments["query"],
+            engine=arguments.get("engine", "duckduckgo"),
+            max_results=int(arguments.get("max_results", 10)),
+            tab_id=arguments.get("tab_id"),
+        )
+
+
+class BrowserOpenResultTool(_BrowserTool):
+    """Open a stored search result and extract its content."""
+
+    name = "browser_open_result"
+    description = (
+        "Open a result from the most recent browser_search (by "
+        "0-based index) in a new tab tagged with its purpose, "
+        "and extract the page's structured content."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "index": {"type": "integer"},
+            "purpose": {"type": "string"},
+            "max_chars": {"type": "integer"},
+        },
+        "required": ["index"],
+        "additionalProperties": False,
+    }
+
+    def __init__(self, controller, research):
+        super().__init__(controller)
+        self.research = research
+
+    def run(self, arguments: dict[str, Any]) -> Any:
+        return self._call(
+            self.research.open_result,
+            int(arguments["index"]),
+            purpose=arguments.get("purpose"),
+            max_chars=int(arguments.get("max_chars", 4000)),
+        )
+
+
 def create_browser_tools(
     controller: BrowserController,
 ) -> list[Tool]:
     """Create the full set of browser Tools bound to *controller*."""
+    research = WebResearch(controller)
+    # the session is reachable from the controller (and thus the
+    # agent) for inspection; the tools close over the same one
+    controller.research_session = research
     return [
         BrowserLaunchTool(controller),
         BrowserConnectTool(controller),
@@ -688,6 +959,12 @@ def create_browser_tools(
         BrowserWaitForTool(controller),
         BrowserScreenshotTool(controller),
         BrowserUploadFileTool(controller),
+        BrowserAccessibilityTreeTool(controller),
+        BrowserFindSemanticTool(controller),
+        BrowserSetTabPurposeTool(controller),
+        BrowserExtractContentTool(controller),
+        BrowserSearchTool(controller, research),
+        BrowserOpenResultTool(controller, research),
     ]
 
 

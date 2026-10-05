@@ -798,6 +798,42 @@ desktops, custom-drawn UI — the `ScreenObserver`
   of acting on an old screen. Tests:
   `tests/test_screen_observer.py`.
 
+## Accessibility, semantics, tabs, search and extraction
+
+Five capabilities layered on the same BrowserController (no
+second driver, no browser logic in the core agent):
+
+- **Accessibility tree** (`browser_accessibility_tree`) — the
+  browser's own accessibility snapshot normalized into
+  structured nodes (role, name, value, heading level); when a
+  driver cannot provide one, an equivalent tree is derived
+  from DOM interactive elements with live refs. Accessibility
+  first, DOM second, pixels (ScreenObserver) last.
+- **Semantic locator** (`browser_find_semantic`) — "Login
+  button", "Search field", "Next page link": candidates are
+  ranked by role fit + name similarity with confidence scores.
+  Matches below 0.5 are returned with **no element reference**,
+  so a low-confidence guess can never be acted on
+  automatically.
+- **Multi-tab task manager** — tabs carry task purposes
+  (`browser_new_tab` with `purpose`, `browser_set_tab_purpose`,
+  purposes shown by `browser_list_tabs` and recorded into
+  AgentState), so parallel research lines never act on the
+  wrong tab.
+- **Web research** (`browser_search`, `browser_open_result`) —
+  search DuckDuckGo/Google/Bing, get structured results
+  (rank, title, URL, snippet, source; engine redirects
+  unwrapped), then open a result by index into its own
+  purpose-tagged tab with content attached.
+- **Page content extraction** (`browser_extract_content`) —
+  headings, paragraphs, lists, links and tables (row/column
+  structure preserved) in clean normalized form: boilerplate
+  filtered, large pages chunked with token estimates, and
+  secrets redacted from text and URLs before anything reaches
+  AgentState or the model. Tests:
+  `tests/test_browser_accessibility.py` and
+  `tests/test_browser_research.py` (30 browser tools total).
+
 # 🏁 Phase 1 Status — Clean, Tested, Cross-Platform
 
 Phase 1 (the core agent architecture) is complete and verified
