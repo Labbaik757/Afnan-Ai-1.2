@@ -617,11 +617,13 @@ works the same on Windows, macOS and Linux:
   connect (CDP), create/select/close tabs, navigate by URL,
   back/forward/reload, read the current page state (URL + title),
   and shut down.  Navigating with no tab open creates one.
-- **`BrowserBackend`** is the driver boundary.  The shipped
-  `PlaywrightBackend` drives Chromium/Chrome/Edge/Firefox/WebKit
-  via Playwright (lazily imported — installing nothing is fine
-  until a browser actually launches).  Tests and other hosts can
-  inject any backend without touching controller or agent code.
+- **`BrowserBackend`** is the driver boundary (now the
+  `BrowserEngineAdapter` interface — see the Runtime section
+  below).  The shipped `PlaywrightAdapter` drives
+  Chromium/Chrome/Edge/Firefox/WebKit via Playwright (lazily
+  imported — installing nothing is fine until a browser
+  actually launches).  Tests and other hosts can inject any
+  adapter without touching controller or agent code.
 - **Tools** — every operation is a registry Tool (`browser_launch`,
   `browser_connect`, `browser_new_tab`, `browser_list_tabs`,
   `browser_select_tab`, `browser_close_tab`, `browser_navigate`,
@@ -726,6 +728,63 @@ End-to-end tests (successful sign-in, failure → recovery →
 completion, blind-repeat rejection, navigation-failure
 recovery, unexpected-popup recovery, dynamic-content wait) live
 in `tests/test_browser_reliability.py`.
+
+## Afnan Browser Runtime (Phase 3 foundation)
+
+The agent never depends on a browser automation library.  The
+layering is:
+
+```
+Afnan Agent → Browser Tools → BrowserController
+    → AfnanBrowserRuntime → BrowserEngineAdapter
+    → PlaywrightAdapter → Chromium
+```
+
+- **`AfnanBrowserRuntime`** (`afnan_ai/browser/runtime.py`) is
+  the actual owner of browser state: lifecycle
+  (start/stop/restart/connect), the engine-level session
+  (session id, active profile, tab records with URLs/titles),
+  persistent profiles (a registry + per-profile storage
+  directories under a runtime dir; credential-shaped
+  preferences are stripped and never logged), session
+  persistence (`session.json`, redacted, reloadable after a
+  restart), an event stream (`browser_started`, `tab_created`,
+  `navigation_completed`, `popup_detected`,
+  `download_completed`, `browser_crashed`, ... — subscribable
+  and logged, ready for AgentState consumers), capability
+  discovery (Afnan-level names via the `browser_capabilities`
+  tool — never raw engine features), and crash detection +
+  recovery: a dead engine flips the session to `crashed`,
+  `recover()` restarts it and reports the recoverable tabs
+  instead of blindly restarting the task.
+- **`BrowserEngineAdapter`** (`afnan_ai/browser/engine.py`) is
+  the only interface an engine implements; handles stay opaque
+  and no engine types cross it.  **`PlaywrightAdapter`**
+  (`backend.py`) is the shipped implementation (Chromium via
+  Playwright, persistent profile contexts included);
+  `BrowserBackend`/`PlaywrightBackend` remain as compatibility
+  aliases.  A future `AfnanChromiumAdapter` only has to
+  implement this interface — runtime, controller, tools,
+  Planner, Executor, Verifier and Recovery stay untouched.
+- **Models** (`afnan_ai/browser/models.py`) — `BrowserSession`,
+  `BrowserProfile`, `BrowserTab`, `BrowserWindow`,
+  `BrowserPage`, `BrowserObservation`, `BrowserElement`,
+  `BrowserAction`, `BrowserResult`: engine-independent,
+  serializable records; AgentState and checkpoints only ever
+  hold these (URLs redacted), never engine objects.
+- **Errors** are Afnan codes end to end: `browser_unavailable`,
+  `startup_failed`, `navigation_failed`, `tab_not_found`,
+  `element_not_found`, `timeout`, `browser_crashed`,
+  `session_expired`, `profile_error`, `unsupported_operation`.
+  Engine exceptions never leak past the adapter/runtime
+  boundary, and the runtime never executes model-generated
+  code.
+
+Tests: `tests/test_browser_runtime.py` drives a purpose-built
+`FakeBrowserAdapter` (startup, tabs, navigation, events,
+profiles, sessions, crash recovery, serialization, controller
+and AgentState integration) with no real browser launched
+(41 browser tools total).
 
 ## Autonomous browser workflow
 

@@ -26,6 +26,7 @@ EXPECTED_TOOLS = [
     "browser_accessibility_tree",
     "browser_approvals",
     "browser_back",
+    "browser_capabilities",
     "browser_check_challenge",
     "browser_clear",
     "browser_click",
