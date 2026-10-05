@@ -24,6 +24,7 @@ from tests.test_browser_controller import FakeBrowserBackend
 
 EXPECTED_TOOLS = [
     "browser_accessibility_tree",
+    "browser_approvals",
     "browser_back",
     "browser_check_challenge",
     "browser_clear",
@@ -41,10 +42,13 @@ EXPECTED_TOOLS = [
     "browser_launch",
     "browser_list_tabs",
     "browser_navigate",
+    "browser_network_status",
     "browser_new_tab",
     "browser_observe_page",
     "browser_open_result",
     "browser_press_key",
+    "browser_profiles",
+    "browser_rate_limit",
     "browser_reload",
     "browser_screenshot",
     "browser_scroll",

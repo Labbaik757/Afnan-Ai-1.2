@@ -143,6 +143,25 @@ def run_task(goal, state=None, max_iterations=None):
     return _agent.run_task(goal, state=state, max_iterations=max_iterations)
 
 
+def save_checkpoint():
+    """Persist a checkpoint of the current/last task (goal, plan,
+    state and browser session, redacted + integrity-protected)."""
+    return _agent.save_checkpoint()
+
+
+def resume_task(checkpoint):
+    """Resume an interrupted task from a checkpoint file (or a
+    task_id in the checkpoint directory): completed steps are
+    not executed again."""
+    return _agent.resume_task(checkpoint)
+
+
+def get_checkpointer():
+    """Return the CheckpointManager (when checkpoint_dir was
+    configured), else None."""
+    return _agent.checkpointer
+
+
 def get_recovery():
     """Return the RecoveryManager used by the orchestrator
     (replans after failed/uncertain steps, attempts recorded

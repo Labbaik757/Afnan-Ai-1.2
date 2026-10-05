@@ -283,7 +283,9 @@ def main() -> int:
             "browser_search", "browser_open_result",
             "browser_wait_for_stable", "browser_collect_items",
             "browser_check_challenge", "browser_wait_challenge",
-            "browser_downloads",
+            "browser_downloads", "browser_network_status",
+            "browser_rate_limit", "browser_approvals",
+            "browser_profiles",
             "browser_session",
         }
         if set(browser_tool_names) != expected_browser_tools:
