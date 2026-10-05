@@ -107,6 +107,9 @@ class AfnanAgent:
         enable_connector_tools: bool = True,
         connector_credentials=None,
         context_budget=None,
+        skill_registry=None,
+        skill_approver=None,
+        enable_skill_tools: bool = True,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -355,6 +358,44 @@ class AfnanAgent:
             self.tools.register_many(
                 create_connector_tools(self.connector_service)
             )
+        # Dynamic Tool & Skill Builder: reusable workflows
+        # composed of *existing* registered tools.  A Skill is
+        # never a Tool subclass; the registry bridges active
+        # skills into the ToolRegistry one-way as skill_<id>
+        # adapters, so Planner/Executor/Verifier/Recovery and
+        # the AgentLoop handle them with zero special cases —
+        # skills get no separate orchestration loop.
+        from afnan_ai.skills import (
+            SkillExecutor,
+            SkillGenerator,
+            SkillLearner,
+            SkillRegistry,
+        )
+
+        self.skill_registry: SkillRegistry = (
+            skill_registry
+            or SkillRegistry(
+                tool_registry=self.tools,
+                audit_path=str(
+                    memory_base / "skill_audit.jsonl"
+                ),
+            )
+        )
+        # Keep the registry pointed at the live tool registry
+        # even when a pre-built one was injected.
+        self.skill_registry._tool_registry = self.tools
+        self.skill_learner = SkillLearner()
+        self.skill_generator = SkillGenerator(
+            self.tools, self.skill_registry
+        )
+        self.skill_executor = SkillExecutor(
+            self.skill_registry,
+            self.tools,
+            approver=skill_approver,
+            audit_path=str(memory_base / "skill_audit.jsonl"),
+        )
+        if enable_skill_tools:
+            self.register_skill_tools()
         self.orchestrator: OrchestratorAgent = orchestrator or OrchestratorAgent(
             planner=self.planner,
             executor=self.executor,
@@ -757,18 +798,39 @@ class AfnanAgent:
         def _context_factory():
             return ContextManager(budget=budget)
 
+        def _system_context():
+            # Capability-agnostic: connectors + skills each
+            # contribute a short section; the loop itself
+            # knows nothing about either.
+            parts = []
+            if self.connector_service is not None:
+                try:
+                    section = (
+                        self.connector_service.context_section()
+                    )
+                except Exception:
+                    section = None
+                if section:
+                    parts.append(section)
+            try:
+                skill_section = (
+                    self.skill_registry.context_section()
+                )
+            except Exception:
+                skill_section = ""
+            if skill_section:
+                parts.append(skill_section)
+            return "\n".join(parts) or None
+
         return AgentLoop(
             self.orchestrator,
             observation_provider=self._loop_observation,
             memory_store=self.memory_store,
             goal_manager=self.goal_manager,
-            system_context_provider=(
-                self.connector_service.context_section
-                if self.connector_service is not None
-                else None
-            ),
+            system_context_provider=_system_context,
             context_manager_factory=_context_factory,
             trajectory_store=self.trajectory_store,
+            skill_learner=self.skill_learner,
         )
 
     def run_agent_loop(self, goal, *, state=None, resume_from=None,
@@ -836,6 +898,34 @@ class AfnanAgent:
         """The persistent per-task TrajectoryStore (restart
         recovery for execution trajectories)."""
         return self.trajectory_store
+
+    # -- dynamic tool & skill builder -------------------------
+    def get_skill_registry(self):
+        """The versioned SkillRegistry (register / discover /
+        update / disable skills)."""
+        return self.skill_registry
+
+    def get_skill_learner(self):
+        """The SkillLearner (verified workflows → candidates)."""
+        return self.skill_learner
+
+    def get_skill_generator(self):
+        """The SkillGenerator (capability search → draft →
+        validated skill)."""
+        return self.skill_generator
+
+    def set_skill_approver(self, approver) -> None:
+        """Set the human approver for sensitive/destructive
+        skill execution (None restores fail-safe refusal)."""
+        self.skill_executor.set_approver(approver)
+
+    def register_skill_tools(self) -> int:
+        """Expose active skills as skill_<id> tools in the
+        agent's ToolRegistry (call again after registering or
+        updating skills)."""
+        return self.skill_registry.register_skill_tools(
+            self.tools, executor=self.skill_executor
+        )
 
     # -- persistent memory / goals / tasks --------------------------
     def get_memory_store(self):
