@@ -196,6 +196,20 @@ def get_browser_perception():
     return _agent.get_browser_perception()
 
 
+def get_agent_loop():
+    """Return the real-time AgentLoop (observe → decide →
+    validate → act → observe → verify)."""
+    return _agent.get_agent_loop()
+
+
+def run_agent_loop(goal, **kwargs):
+    """Run a goal through the real-time autonomous AgentLoop.
+    Keyword arguments map to LoopLimits (max_steps,
+    max_llm_calls, max_browser_actions...) plus state,
+    resume_from, control and on_event."""
+    return _agent.run_agent_loop(goal, **kwargs)
+
+
 def get_recovery():
     """Return the RecoveryManager used by the orchestrator
     (replans after failed/uncertain steps, attempts recorded

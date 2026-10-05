@@ -255,6 +255,10 @@ class AfnanAgent:
         # Recovery manager (owned by the orchestrator): replans
         # after failed/uncertain steps, attempts recorded in state
         self.recovery = self.orchestrator.recovery
+        # Real-time autonomous loop (observe → decide → validate
+        # → act → observe → verify); built lazily, wired to the
+        # browser perception layer for fresh observations.
+        self._agent_loop = None
         # Centralized, serializable task state.  Components may pass
         # their own AgentState, read ``agent.state``, or ignore it —
         # existing behaviour is unchanged when they do.
@@ -575,6 +579,68 @@ class AfnanAgent:
         if self.browser is None:
             return None
         return getattr(self.browser, "perception", None)
+
+    # -- real-time autonomous loop --------------------------------
+    def _loop_observation(self, state=None):
+        """Fresh unified browser observation for the AgentLoop
+        (None when no browser page is available)."""
+        perception = self.get_browser_perception()
+        if perception is None:
+            return None
+        try:
+            observed = perception.observe()
+        except Exception:
+            return None
+        return {
+            "kind": observed.get("kind"),
+            "url": observed.get("url", ""),
+            "title": observed.get("title", ""),
+            "text": observed.get("text", ""),
+            "tab_id": observed.get("tab_id", ""),
+            "elements": [
+                {
+                    "role": e.get("role", ""),
+                    "accessible_name": e.get("accessible_name", ""),
+                    "text": e.get("text", ""),
+                }
+                for e in observed.get("elements") or []
+            ],
+        }
+
+    def get_agent_loop(self):
+        """The real-time AgentLoop driving this agent's
+        Planner/Executor/Verifier/Recovery with fresh browser
+        observations."""
+        if self._agent_loop is None:
+            from afnan_ai.agent_loop import AgentLoop
+
+            self._agent_loop = AgentLoop(
+                self.orchestrator,
+                observation_provider=self._loop_observation,
+            )
+        return self._agent_loop
+
+    def run_agent_loop(self, goal, *, state=None, resume_from=None,
+                       control=None, on_event=None, **limit_kwargs):
+        """Run *goal* through the real-time autonomous loop:
+        observe → decide (small batch) → validate → execute →
+        fresh observation → verify → continue/replan/complete.
+        Extra keyword arguments map to LoopLimits fields
+        (max_steps, batch_limit, max_replans, max_llm_calls,
+        max_duration_s, max_browser_actions...)."""
+        from afnan_ai.agent_loop import LoopLimits
+
+        limits = LoopLimits(**{
+            k: v for k, v in limit_kwargs.items() if v is not None
+        }) if limit_kwargs else None
+        return self.get_agent_loop().run(
+            goal,
+            state=state,
+            limits=limits,
+            resume_from=resume_from,
+            control=control,
+            on_event=on_event,
+        )
 
     # Alias in goal vocabulary
     run_goal = run_task
