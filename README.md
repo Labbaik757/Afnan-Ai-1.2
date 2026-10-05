@@ -1448,6 +1448,60 @@ data and code output — without duplicating the AgentLoop:
   no second orchestration loop.  Tests:
   `tests/test_artifacts.py` (26 tests).
 
+## Proactive intelligence & ideas
+
+`afnan_ai/proactive/` is a controlled intelligence layer —
+not a replacement for the central agent.  It watches
+authorized state and surfaces evidence-based suggestions:
+
+    User / Environment State
+      ↓ ProactiveEngine
+      ↓ Opportunity Detection
+      ↓ Relevance + Confidence + Risk
+      ↓ Idea
+      ↓ User Approval / Allowed Auto-Action
+      ↓ TaskManager
+      ↓ AgentLoop
+      ↓ Execute + Verify
+      ↓ Goal / Memory / Artifact Update
+
+- **Idea model** — id, title, description, reason,
+  related goal/task, evidence, confidence, priority,
+  suggested action, risk level, timestamps, and status
+  (`new` / `dismissed` / `accepted` / `scheduled` /
+  `completed` / `failed` / `expired`).
+- **Suggestion types** — unfinished tasks, goal progress,
+  follow-ups, recurring workflows, research opportunities,
+  project improvements, missed dependencies, upcoming
+  deadlines, automation opportunities.  Every suggestion is
+  evidence-backed; nothing is generated from unsupported
+  assumptions.
+- **Controlled behavior** — the engine never executes.
+  Default flow is Detect → Suggest → Risk/Permission check →
+  Notify → User accepts → Task created → AgentLoop executes
+  → Verify.  Read-only low-risk auto-execution exists but is
+  off by default; sensitive/irreversible actions always need
+  human approval (no approver → `approval_required`).
+- **Timing intelligence** — per-opportunity cooldown,
+  signature dedup, relevance threshold, quiet hours, and a
+  cap on suggestions per period.  Goal-linked ideas get a
+  priority boost from the user's active goals.
+- **Boundaries** — only authorized sources (goals, tasks,
+  schedules, memories, activity), user-controllable scope
+  and enable/disable; external emails/pages/documents are
+  never treated as instructions; injection-shaped text is
+  withheld and secrets are redacted from suggestions.
+- **Background + offline** — `run_sweep()` evaluates
+  periodically, expires stale ideas, and persists the queue
+  so suggestions survive offline and show next session.
+- **Feedback loop** — accepted/dismissed/ignored/completed/
+  failed tune future ranking; inferred preferences are never
+  written to memory.
+- **Agent wiring** — `AfnanAgent.get_proactive_engine()`
+  (+ `set_proactive_approver()`, `run_proactive_sweep()`,
+  `main` delegates).  Tests: `tests/test_proactive.py`
+  (29 tests).
+
 ## Autonomous browser workflow
 
 `run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,
