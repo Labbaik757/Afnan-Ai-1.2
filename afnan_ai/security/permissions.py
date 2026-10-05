@@ -16,6 +16,9 @@ from __future__ import annotations
 import threading
 from typing import Any
 
+from afnan_ai.security.capabilities import (
+    canonical_capability_id,
+)
 from afnan_ai.security.models import Actor, ActorKind
 from afnan_ai.security.risk import risk_for_capability
 
@@ -35,7 +38,7 @@ class PermissionManager:
         with self._lock:
             granted = self._grants.setdefault(key, set())
             for cap in capabilities:
-                cap = str(cap or "").strip().lower()
+                cap = canonical_capability_id(cap)
                 if cap:
                     granted.add(cap)
 
@@ -46,9 +49,7 @@ class PermissionManager:
         with self._lock:
             granted = self._grants.get(key, set())
             for cap in capabilities:
-                granted.discard(
-                    str(cap or "").strip().lower()
-                )
+                granted.discard(canonical_capability_id(cap))
 
     def revoke_all(self, actor: Actor | str) -> None:
         with self._lock:
@@ -67,7 +68,7 @@ class PermissionManager:
         self, actor: Actor | str, capability: str
     ) -> bool:
         """Exact or prefix-wildcard match ('browser.*')."""
-        capability = str(capability or "").strip().lower()
+        capability = canonical_capability_id(capability)
         if not capability:
             return False
         with self._lock:
@@ -103,9 +104,12 @@ class PermissionManager:
         delegation can never escalate privilege."""
         parent_caps = set(self.capabilities_for(parent))
         allowed = tuple(
-            c for c in requested
-            if c in parent_caps or f"{c.split('.')[0]}.*"
-            in parent_caps
+            canonical_capability_id(c) for c in requested
+            if (
+                canonical_capability_id(c) in parent_caps
+                or f"{canonical_capability_id(c).split('.')[0]}.*"
+                in parent_caps
+            )
         )
         child = Actor(
             kind=child_kind, actor_id=child_id,
