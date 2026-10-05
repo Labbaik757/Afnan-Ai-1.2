@@ -1,12 +1,17 @@
-"""BrowserController system for Afnan AI.
+"""Browser system for Afnan AI.
 
 Programmatic browser control (launch/connect, tabs, navigation,
 page state, history, shutdown) that works the same on Windows,
-macOS and Linux.  The browser-specific work lives in a swappable
-:class:`BrowserBackend` (Playwright by default); the
-:class:`BrowserController` owns the session and the browser
-Tools expose it through the ToolRegistry, so the core Agent only
-ever sees ordinary Tools.
+macOS and Linux.  The layering is::
+
+    BrowserController → AfnanBrowserRuntime
+        → BrowserEngineAdapter → PlaywrightAdapter → Chromium
+
+The controller owns sessions/tabs/validation, the runtime owns
+browser lifecycle and recoverable state, and only the adapter
+talks to a concrete engine — so the engine can be swapped (a
+future Afnan Chromium adapter) without touching controller,
+tools or the core agent.
 
 Importing this package never imports a browser driver or launches
 anything.
@@ -15,6 +20,7 @@ anything.
 from afnan_ai.browser.backend import (
     SUPPORTED_BROWSERS,
     BrowserBackend,
+    PlaywrightAdapter,
     PlaywrightBackend,
 )
 from afnan_ai.browser.base import (
@@ -26,8 +32,21 @@ from afnan_ai.browser.base import (
     TabInfo,
 )
 from afnan_ai.browser.controller import BrowserController
+from afnan_ai.browser.engine import BrowserEngineAdapter
+from afnan_ai.browser.models import (
+    BrowserAction,
+    BrowserElement,
+    BrowserObservation,
+    BrowserPage,
+    BrowserProfile,
+    BrowserResult,
+    BrowserSession,
+    BrowserTab,
+    BrowserWindow,
+)
 from afnan_ai.browser.reliability import BrowserReliability
 from afnan_ai.browser.research import WebResearch
+from afnan_ai.browser.runtime import AfnanBrowserRuntime
 from afnan_ai.browser.security import (
     ActionRisk,
     ApprovalDecision,
@@ -43,19 +62,31 @@ from afnan_ai.browser.workflow import BrowserTaskResult, BrowserWorkflow
 __all__ = [
     "SUPPORTED_BROWSERS",
     "ActionRisk",
+    "AfnanBrowserRuntime",
     "ApprovalDecision",
     "ApprovalGate",
     "ApprovalRequest",
+    "BrowserAction",
     "BrowserBackend",
     "BrowserController",
+    "BrowserElement",
+    "BrowserEngineAdapter",
+    "BrowserObservation",
+    "BrowserPage",
+    "BrowserProfile",
     "BrowserReliability",
     "BrowserError",
     "BrowserErrorCode",
     "BrowserException",
+    "BrowserResult",
+    "BrowserSession",
+    "BrowserTab",
     "BrowserTaskResult",
+    "BrowserWindow",
     "BrowserWorkflow",
     "ElementInfo",
     "PageState",
+    "PlaywrightAdapter",
     "PlaywrightBackend",
     "SecurityPolicy",
     "Sensitivity",

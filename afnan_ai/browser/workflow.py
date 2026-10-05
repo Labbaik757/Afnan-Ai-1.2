@@ -204,10 +204,17 @@ class BrowserWorkflow:
 
     def _snapshot(self) -> dict[str, Any]:
         controller = self.controller
+        runtime = controller.runtime
         data: dict[str, Any] = {
             "profile": controller.current_profile,
             "tabs": [],
             "current_page": None,
+            "browser_session": {
+                "session_id": runtime.session.session_id,
+                "adapter": runtime.name,
+                "profile_id": runtime.session.profile_id,
+                "status": runtime.session.status,
+            },
         }
         tab_lines: list[str] = []
         try:

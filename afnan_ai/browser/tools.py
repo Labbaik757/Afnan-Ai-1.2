@@ -1151,6 +1151,27 @@ class BrowserNetworkStatusTool(_BrowserTool):
         }
 
 
+class BrowserCapabilitiesTool(_BrowserTool):
+    name = "browser_capabilities"
+    description = (
+        "Report what the Afnan Browser Runtime can do: "
+        "capabilities (tabs, accessibility, screenshots, "
+        "downloads, uploads, persistent profiles, semantic "
+        "locator, network observation...), the engine adapter "
+        "in use, the session and the active profile. These are "
+        "Afnan-level capabilities, not engine features."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._call(self.controller.capabilities)
+
+
 class BrowserRateLimitTool(_BrowserTool):
     name = "browser_rate_limit"
     description = (
@@ -1422,6 +1443,7 @@ def create_browser_tools(
         BrowserApprovalsTool(controller),
         BrowserProfilesTool(controller),
         BrowserSessionTool(controller),
+        BrowserCapabilitiesTool(controller),
     ]
 
 
