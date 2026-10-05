@@ -31,11 +31,32 @@ def _int_from_env(name: str, default: int) -> int:
     return value if value >= 0 else default
 
 
+def _float_from_env(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
 @dataclass(frozen=True)
 class AgentConfig:
     """Runtime configuration for the assistant + Agent pipeline."""
 
     wake_word: str = "afnan"
+    #: Speech-to-text language for Google recognition
+    #: ("ur-PK" for Urdu, "en-IN" for English).
+    stt_language: str = "ur-PK"
+    #: Path to an on-device wake-word .onnx model (see
+    #: afnan_ai/wakeword.py).  None → cloud fallback loop.
+    wakeword_model: str | None = None
+    #: Confidence threshold for the on-device wake detector.
+    wakeword_threshold: float = 0.5
+    #: Neural voice for Urdu TTS (edge-tts, no account).
+    tts_urdu_voice: str = "ur-PK-GulNawazNeural"
     max_iterations: int = 10
     max_recovery_attempts: int = 2
     llm_provider: str = "ollama"
@@ -53,6 +74,19 @@ class AgentConfig:
         return cls(
             wake_word=os.environ.get(
                 f"{prefix}WAKE_WORD", defaults.wake_word
+            ),
+            stt_language=os.environ.get(
+                f"{prefix}STT_LANGUAGE", defaults.stt_language
+            ),
+            wakeword_model=os.environ.get(
+                f"{prefix}WAKEWORD_MODEL", defaults.wakeword_model
+            ),
+            wakeword_threshold=_float_from_env(
+                f"{prefix}WAKEWORD_THRESHOLD",
+                defaults.wakeword_threshold,
+            ),
+            tts_urdu_voice=os.environ.get(
+                f"{prefix}TTS_URDU_VOICE", defaults.tts_urdu_voice
             ),
             max_iterations=_int_from_env(
                 f"{prefix}MAX_ITERATIONS", defaults.max_iterations
