@@ -284,6 +284,23 @@ def set_artifact_approver(approver) -> None:
     return _agent.set_artifact_approver(approver)
 
 
+def get_proactive_engine():
+    """Return the ProactiveEngine (None when disabled)."""
+    return _agent.get_proactive_engine()
+
+
+def set_proactive_approver(approver) -> None:
+    """Set the human approver for sensitive proactive
+    actions (None restores fail-safe refusal)."""
+    return _agent.set_proactive_approver(approver)
+
+
+def run_proactive_sweep():
+    """Run one proactive sweep: detect, expire and queue
+    ideas.  Never executes actions by itself."""
+    return _agent.run_proactive_sweep()
+
+
 def get_memory_store():
     """Return the persistent MemoryStore (verified facts,
     preferences, task summaries; secrets are refused)."""

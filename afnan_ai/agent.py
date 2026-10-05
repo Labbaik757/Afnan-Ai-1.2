@@ -113,6 +113,9 @@ class AfnanAgent:
         artifact_workspace_dir=None,
         artifact_approver=None,
         enable_artifact_tools: bool = True,
+        proactive_config=None,
+        proactive_approver=None,
+        enable_proactive: bool = True,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -454,6 +457,29 @@ class AfnanAgent:
         if enable_artifact_tools:
             self.tools.register_many(
                 create_artifact_tools(self.artifact_manager)
+            )
+        # Proactive intelligence: a controlled layer that
+        # surfaces evidence-based ideas from authorized
+        # state.  It never executes by itself — accepted
+        # ideas become normal tasks for the existing loop.
+        from afnan_ai.proactive import (
+            ProactiveConfig,
+            ProactiveEngine,
+        )
+
+        self.proactive_engine: ProactiveEngine | None = None
+        if enable_proactive:
+            self.proactive_engine = ProactiveEngine(
+                memory_store=self.memory_store,
+                goal_manager=self.goal_manager,
+                task_manager=self.task_manager,
+                scheduler=self.scheduler,
+                config=proactive_config or ProactiveConfig(),
+                store_path=str(
+                    memory_base / "proactive.json"
+                ),
+                approver=proactive_approver,
+                task_runner=self._run_proactive_task,
             )
         self.orchestrator: OrchestratorAgent = orchestrator or OrchestratorAgent(
             planner=self.planner,
@@ -862,6 +888,69 @@ class AfnanAgent:
         """Set the human approver for destructive artifact
         operations (None restores fail-safe refusal)."""
         self.artifact_manager.set_approver(approver)
+
+    # -- proactive intelligence ---------------------------------------
+    def get_proactive_engine(self):
+        """The ProactiveEngine: evidence-based ideas from
+        authorized state (None when disabled)."""
+        return self.proactive_engine
+
+    def set_proactive_approver(self, approver) -> None:
+        """Set the human approver for sensitive proactive
+        actions (None restores fail-safe refusal)."""
+        if self.proactive_engine is not None:
+            self.proactive_engine.set_approver(approver)
+
+    def run_proactive_sweep(self):
+        """One background-style sweep: detect, expire and
+        queue ideas.  Never executes actions by itself."""
+        if self.proactive_engine is None:
+            return []
+        return self.proactive_engine.run_sweep()
+
+    def _run_proactive_task(self, task_id: str):
+        """Auto-execution path for explicitly configured
+        read-only low-risk ideas: claim exactly this task
+        and run it through the normal managed-task runner,
+        recording the outcome like the background worker."""
+        from datetime import datetime, timezone
+
+        def _iso():
+            return datetime.now(timezone.utc).isoformat()
+
+        task = self.task_manager.get(task_id)
+        if task is None:
+            raise ValueError(f"unknown task {task_id!r}")
+        if task.status != "pending":
+            raise ValueError(
+                f"task {task_id!r} is {task.status}, "
+                "not pending"
+            )
+        task.attempts += 1
+        task.started_at = _iso()
+        task.status = "running"
+        task.updated_at = _iso()
+        self.task_manager._save()
+        try:
+            result = self._run_managed_task(task, None)
+        except Exception as exc:  # noqa: BLE001
+            self.task_manager.fail(
+                task_id, f"Runner error: {exc}", retry=False
+            )
+            raise
+        status = getattr(result, "status", None)
+        status_value = getattr(status, "value", status)
+        if status_value == "completed":
+            return self.task_manager.complete(
+                task_id, f"Proactive task {task_id} completed"
+            )
+        error = getattr(result, "error", None) or {}
+        self.task_manager.fail(
+            task_id,
+            str(error.get("message") or "task failed"),
+            retry=False,
+        )
+        return self.task_manager.get(task_id)
 
     def _build_subagent_loop(
         self, spec, scoped_tools, context_text, checkpointer=None
