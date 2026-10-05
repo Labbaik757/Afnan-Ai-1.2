@@ -727,6 +727,33 @@ completion, blind-repeat rejection, navigation-failure
 recovery, unexpected-popup recovery, dynamic-content wait) live
 in `tests/test_browser_reliability.py`.
 
+## Operations: network, checkpoints, rate limits, profiles
+
+- **Network awareness**: pages report their request health
+  (failed requests, timeouts, blocked resources, HTTP 429s);
+  `browser_network_status` summarizes it for diagnostics and
+  recovery advice. Observation only: nothing can fire arbitrary
+  network requests.
+- **Task checkpointing**: with a `checkpoint_dir`, tasks persist
+  redacted, checksum-protected checkpoints (goal, plan, state,
+  recovery history, browser session) after every step.
+  `resume_task` continues an interrupted task from its last
+  checkpoint; completed steps are never executed twice, and a
+  corrupted checkpoint is rejected, never trusted.
+- **Rate-limit awareness**: rate-limit pages, bot-block signals
+  and HTTP 429 responses stop actions with a structured
+  `rate_limited` error; optional per-host pacing pauses instead
+  of hammering, and `browser_rate_limit` takes one controlled
+  backoff. There are no aggressive retries.
+- **Approval records**: every sensitive-action decision
+  (approved, denied, timed out, blocked) is recorded with its
+  outcome; `browser_approvals` lists them, and a policy can set
+  `approval_timeout_s` so a late answer never runs the action.
+- **Browser profiles**: isolated profiles with separate cookies,
+  storage and tabs (`browser_profiles`); one profile is active
+  at a time, switching stashes the other profile's tabs, and
+  profile records never hold credential-shaped preferences.
+
 ## Security: approval gate + secret hygiene
 
 Irreversible browser actions are gated by a human, and secrets
