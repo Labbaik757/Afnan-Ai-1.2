@@ -1029,6 +1029,49 @@ agent:
   in at the scheduler/runner event seam.  Tests:
   `tests/test_background_scheduler.py`.
 
+## Computer Use: desktop control outside the browser
+
+`afnan_ai/computer/` adds a Muse-style desktop layer with
+the same layering as the browser stack:
+
+    AgentLoop -> Tools -> ComputerController -> ComputerBackend
+
+- **ComputerBackend** is the platform-independent interface
+  (mouse, keyboard, windows, applications, screenshots,
+  accessibility metadata).  The shipped
+  `CommandComputerBackend` drives each OS's own tools —
+  xdotool/wmctrl on Linux, osascript/cliclick on macOS,
+  PowerShell user32 on Windows — with no third-party
+  dependency; missing tools surface as structured
+  `backend_unavailable` errors, and a native backend can be
+  swapped in behind the same interface.
+- **ComputerController** fuses window state, accessibility
+  metadata and ScreenObserver visual detections into one
+  structured `ComputerObservation` (raw screenshots never
+  enter state or logs), locates semantic targets ("Save
+  button", "Chrome address bar", "Settings window") with
+  confidence scores, and runs every action as Observe →
+  Validate → Execute → Observe Again → Verify.  Blind
+  coordinate clicking is not a strategy: coordinates need a
+  validated element or explicit human approval, actions on
+  the wrong window are refused, stale targets fail
+  structurally, low-confidence targets are never actionable
+  and uncertain ones require approval.  Closing
+  applications, destructive hotkeys, typing into password
+  fields (the secret is never echoed) and file
+  moves/renames/overwrites go through the fail-safe
+  human-approval gate (`agent.set_computer_approver()`).
+- **Tools**: `computer_observe/locate/click/type/key_press/
+  hotkey/scroll/drag/move_mouse/focus_window/open_application/
+  close_application/list_applications/screenshot/
+  wait_for_ui_change` plus `file_list/create_folder/copy/
+  move/rename/open/save_text/find_downloads`, all in the
+  same ToolRegistry, so one AgentLoop task can research in
+  the browser, detect the downloaded file, process it in a
+  desktop application and verify the result.  Disable with
+  `enable_computer_tools=False`; inject a backend with
+  `computer_backend=`.  Tests: `tests/test_computer_use.py`.
+
 ## Autonomous browser workflow
 
 `run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,
