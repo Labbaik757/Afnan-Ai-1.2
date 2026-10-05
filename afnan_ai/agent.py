@@ -537,6 +537,13 @@ class AfnanAgent:
         """The BrowserWorkflow (None when browser tools are off)."""
         return self.browser_workflow
 
+    def get_browser_runtime(self):
+        """The AfnanBrowserRuntime under the browser controller
+        (None when browser tools are off)."""
+        if self.browser is None:
+            return None
+        return self.browser.runtime
+
     # Alias in goal vocabulary
     run_goal = run_task
 

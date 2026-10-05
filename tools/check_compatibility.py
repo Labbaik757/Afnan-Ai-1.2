@@ -287,6 +287,7 @@ def main() -> int:
             "browser_rate_limit", "browser_approvals",
             "browser_profiles",
             "browser_session",
+            "browser_capabilities",
         }
         if set(browser_tool_names) != expected_browser_tools:
             failures.append(f"browser tools mismatch: {browser_tool_names}")

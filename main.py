@@ -183,6 +183,12 @@ def get_browser_workflow():
     return _agent.get_browser_workflow()
 
 
+def get_browser_runtime():
+    """Return the AfnanBrowserRuntime (browser lifecycle,
+    sessions, profiles, events) under the controller."""
+    return _agent.get_browser_runtime()
+
+
 def get_recovery():
     """Return the RecoveryManager used by the orchestrator
     (replans after failed/uncertain steps, attempts recorded
