@@ -848,12 +848,17 @@ Tool architecture (35 browser tools total):
   scrolls feeds or clicks Next controls, deduplicates items,
   and always terminates: `max_items`, `max_pages`, an
   exhausted list, or a missing/stalled Next control.
-- **CAPTCHA detection** (`browser_check_challenge`) — human
-  checks are detected from URL/title/text/widget signals and
-  reported as `human_required`; clicks and typing on a
-  challenge page stop with the same structured error. A
-  CAPTCHA is **never solved or bypassed** — the task pauses
-  for the user, and recovery advice says exactly that.
+- **CAPTCHA detection** (`browser_check_challenge`,
+  `browser_wait_challenge`) — human checks are detected from
+  URL/title/text/widget signals and reported as
+  `human_required`; clicks and typing on a challenge page stop
+  with the same structured error. A CAPTCHA is **never solved
+  or bypassed by the agent**: with a challenge handler
+  registered (`set_challenge_handler`), the human is asked,
+  solves the check in the browser themselves, and the blocked
+  action resumes automatically once the page clears; without
+  one, the task pauses for the user, and recovery advice says
+  exactly that.
 - **Download manager** (`browser_downloads`) — downloads are
   tracked centrally (state, filename, type, destination,
   size); finished files are verified for existence and basic

@@ -799,5 +799,104 @@ class TestEndToEnd(unittest.TestCase):
         )
 
 
+class TestChallengeHumanFlow(unittest.TestCase):
+    """Human-in-the-loop: approval -> the human solves in the
+    browser -> the action resumes.  The agent never solves."""
+
+    def _captcha_controller(self, backend, **kw):
+        backend.add_page(
+            "https://site.example/challenge", title="Security Check",
+            text="Verify you are human. I'm not a robot.",
+            elements=[el("button", "Verify", {"id": "verify"})],
+        )
+        return make_controller(backend, **kw)
+
+    def test_approved_human_solve_resumes_action(self):
+        backend = DynamicBackend()
+
+        def solve_handler(detection):
+            # the human solves it in the browser: the real page
+            # replaces the challenge (title and text both change,
+            # as a real post-challenge page does)
+            page = backend.pages["https://site.example/challenge"]
+            page["text"] = "Welcome back, human."
+            page["title"] = "Home"
+            return True
+
+        controller, _ = self._captcha_controller(
+            backend,
+            challenge_handler=solve_handler,
+            challenge_wait_ms=2000,
+        )
+        controller.navigate("https://site.example/challenge")
+        found = controller.find_elements({"selector": "button"})
+        result = controller.click({"ref": found[0]["ref"]})
+        self.assertEqual(result["action"], "click")
+
+    def test_declined_handler_keeps_human_required(self):
+        backend = DynamicBackend()
+        controller, _ = self._captcha_controller(
+            backend, challenge_handler=lambda d: False
+        )
+        controller.navigate("https://site.example/challenge")
+        found = controller.find_elements({"selector": "button"})
+        with self.assertRaises(BrowserException) as ctx:
+            controller.click({"ref": found[0]["ref"]})
+        self.assertEqual(
+            ctx.exception.code, BrowserErrorCode.HUMAN_REQUIRED
+        )
+
+    def test_unsolved_challenge_times_out_to_human_required(self):
+        backend = DynamicBackend()
+        controller, _ = self._captcha_controller(
+            backend,
+            challenge_handler=lambda d: True,
+            challenge_wait_ms=300,
+        )
+        controller.navigate("https://site.example/challenge")
+        found = controller.find_elements({"selector": "button"})
+        with self.assertRaises(BrowserException) as ctx:
+            controller.click({"ref": found[0]["ref"]})
+        self.assertEqual(
+            ctx.exception.code, BrowserErrorCode.HUMAN_REQUIRED
+        )
+
+    def test_wait_for_challenge_clear(self):
+        import threading
+
+        backend = DynamicBackend()
+        controller, _ = self._captcha_controller(backend)
+        controller.navigate("https://site.example/challenge")
+        page = backend.pages["https://site.example/challenge"]
+
+        def solve():
+            page["text"] = "All clear now."
+            page["title"] = "Home"
+
+        threading.Timer(0.3, solve).start()
+        result = controller.wait_for_challenge_clear(timeout_ms=3000)
+        self.assertTrue(result["cleared"])
+        self.assertFalse(result["human_required"])
+
+    def test_wait_challenge_tool_registered(self):
+        controller, _ = make_controller(DynamicBackend())
+        names = {t.name for t in create_browser_tools(controller)}
+        self.assertIn("browser_wait_challenge", names)
+
+    def test_agent_challenge_handler_wiring(self):
+        backend = DynamicBackend()
+        controller, _ = make_controller(backend)
+        handler = lambda d: True  # noqa: E731
+        agent = AfnanAgent(
+            llm_provider=QueueLLM([]),
+            browser_controller=controller,
+            challenge_handler=handler,
+        )
+        self.assertIs(agent.browser.challenge_handler, handler)
+        other = lambda d: False  # noqa: E731
+        agent.set_challenge_handler(other)
+        self.assertIs(agent.browser.challenge_handler, other)
+
+
 if __name__ == "__main__":
     unittest.main()
