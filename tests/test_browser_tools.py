@@ -36,13 +36,16 @@ EXPECTED_TOOLS = [
     "browser_list_tabs",
     "browser_navigate",
     "browser_new_tab",
+    "browser_observe_page",
     "browser_press_key",
     "browser_reload",
+    "browser_screenshot",
     "browser_scroll",
     "browser_select_option",
     "browser_select_tab",
     "browser_shutdown",
     "browser_type",
+    "browser_wait_for",
 ]
 
 

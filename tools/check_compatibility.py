@@ -207,7 +207,8 @@ def main() -> int:
             "browser_find_elements", "browser_inspect_element",
             "browser_click", "browser_type", "browser_clear",
             "browser_select_option", "browser_press_key",
-            "browser_scroll",
+            "browser_scroll", "browser_observe_page",
+            "browser_wait_for", "browser_screenshot",
         }
         if set(browser_tool_names) != expected_browser_tools:
             failures.append(f"browser tools mismatch: {browser_tool_names}")

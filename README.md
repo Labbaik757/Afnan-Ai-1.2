@@ -651,6 +651,20 @@ works the same on Windows, macOS and Linux:
   ``ToolResult(success=False)`` with the browser error code in
   `error.details["browser_error"]["code"]`; nothing crashes and
   nothing silently "succeeds".
+- **Observation tools** — `browser_observe_page` returns the
+  page's structured state (URL, title, visible text, the
+  interactive elements with usable refs, and whether the page
+  changed since the last observation); `browser_wait_for`
+  waits for dynamic content by condition (element present/hidden,
+  text present, URL/title contains — driver-level condition
+  waits, never a fixed sleep) and times out with a structured
+  error; `browser_screenshot` captures a PNG of the page to
+  disk.  Observation outputs carry an `observation` summary
+  that the Executor records in `AgentState` alongside the tool
+  result, so what the agent saw is part of the task record.
+  Pages the site itself opens (popups/new-window links) are
+  adopted as regular tabs and appear in `browser_list_tabs`.
+  A failed observation is an error — never an empty "success".
 
 ```python
 agent.execute_tool("browser_launch", {})
@@ -660,13 +674,19 @@ page.output  # {"tab_id": "tab_1", "url": "https://example.com/", "title": "Exam
 found = agent.execute_tool("browser_find_elements", {"role": "button", "name": "Sign in"})
 agent.execute_tool("browser_click", {"ref": found.output["elements"][0]["ref"]})
 agent.execute_tool("browser_type", {"selector": "#username", "text": "afnan"})
+obs = agent.execute_tool("browser_observe_page", {})
+shot = agent.execute_tool("browser_screenshot", {})
+shot.output["path"]  # screenshots/screenshot_20261005_....png
 ```
 
 Unit tests (fake in-memory backend) live in
 `tests/test_browser_controller.py`; interaction tests (login-form
 DOM: successful interactions, element-not-found, stale/invalid
 element, timeout and execution-failure cases) live in
-`tests/test_browser_interactions.py`; registry/Agent integration
+`tests/test_browser_interactions.py`; observation tests (page
+state, dynamic-content waits, popup adoption, screenshot
+recording in AgentState) live in
+`tests/test_browser_observation.py`; registry/Agent integration
 tests live in `tests/test_browser_tools.py`;
 `tools/check_compatibility.py` verifies the browser tools exist
 and that driver code stays inside `afnan_ai/browser/`.
