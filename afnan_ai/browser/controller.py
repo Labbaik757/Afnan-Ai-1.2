@@ -32,7 +32,6 @@ from afnan_ai.browser.accessibility import derive_nodes, normalize_snapshot
 from afnan_ai.browser.backend import (
     SUPPORTED_BROWSERS,
     BrowserBackend,
-    PlaywrightBackend,
 )
 from afnan_ai.browser.base import (
     BrowserErrorCode,
@@ -49,6 +48,7 @@ from afnan_ai.browser.ratelimit import (
     RateLimitDetector,
     RateLimitPolicy,
 )
+from afnan_ai.browser.runtime import AfnanBrowserRuntime
 from afnan_ai.browser.security import (
     ActionRisk,
     ApprovalGate,
@@ -95,8 +95,20 @@ class BrowserController:
         challenge_handler=None,
         challenge_wait_ms: int = 120_000,
         rate_policy: RateLimitPolicy | None = None,
+        runtime: AfnanBrowserRuntime | None = None,
     ):
-        self._backend = backend or PlaywrightBackend()
+        # The controller talks to the Afnan Browser Runtime,
+        # never to an engine adapter directly: the runtime owns
+        # lifecycle/session state and routes through the adapter
+        # (Playwright today, a future Afnan Chromium adapter
+        # later) without this class changing.
+        if runtime is not None:
+            self.runtime = runtime
+        elif backend is not None:
+            self.runtime = AfnanBrowserRuntime(adapter=backend)
+        else:
+            self.runtime = AfnanBrowserRuntime()
+        self._backend = self.runtime.adapter
         # Sensitive-action approval gate (security layer): a
         # default gate is always present, so purchases, sends,
         # destructive clicks, uploads etc. never run without a
@@ -151,7 +163,7 @@ class BrowserController:
             str, tuple[dict[str, _Tab], str | None]
         ] = {}
         # download + session managers (browser-layer services)
-        self.download_manager = DownloadManager(self._backend)
+        self.download_manager = DownloadManager(self.runtime)
         self.session_manager = SessionManager(self)
 
     # -- introspection ----------------------------------------------------
@@ -169,7 +181,7 @@ class BrowserController:
 
     @property
     def backend_name(self) -> str:
-        return self._backend.name
+        return self.runtime.name
 
     def session_history(self) -> list[dict[str, Any]]:
         """Recorded navigation history (redacted URLs)."""
@@ -216,7 +228,7 @@ class BrowserController:
                 details={"browser": name, "supported": list(SUPPORTED_BROWSERS)},
             )
         try:
-            self._backend.start(
+            self.runtime.start(
                 name,
                 self._default_headless if headless is None else headless,
             )
@@ -246,7 +258,7 @@ class BrowserController:
                 code=BrowserErrorCode.CONNECTION_FAILED,
             )
         try:
-            self._backend.connect(endpoint)
+            self.runtime.connect(endpoint)
         except BrowserException:
             raise
         except Exception as e:
@@ -271,7 +283,7 @@ class BrowserController:
         self._running = False
         self._endpoint = None
         try:
-            self._backend.stop()
+            self.runtime.stop()
         except Exception as e:  # shutdown must not crash the caller
             logger.warning("browser backend stop failed: %s", e)
         logger.info("browser shut down (was running: %s)", was_running)
@@ -289,7 +301,7 @@ class BrowserController:
         """
         self._require_running()
         try:
-            handle = self._backend.new_page()
+            handle = self.runtime.new_page()
         except BrowserException:
             raise
         except Exception as e:
@@ -308,6 +320,11 @@ class BrowserController:
             self._goto(tab, url)
         self._refresh(tab)
         self._record_history("new_tab", tab)
+        self.runtime.emit(
+            "tab_created", tab_id=tab.tab_id,
+            purpose=self._tab_purposes.get(tab.tab_id, ""),
+            url=tab.url,
+        )
         logger.info("browser tab created: %s", tab.tab_id)
         return self._tab_info(tab).to_dict()
 
@@ -336,7 +353,7 @@ class BrowserController:
         so they can be listed, selected and observed like any tab."""
         adopted = []
         try:
-            handles = self._backend.list_pages()
+            handles = self.runtime.list_pages()
         except Exception:
             handles = []
         for handle in handles or []:
@@ -348,6 +365,9 @@ class BrowserController:
             self._generations[tab.tab_id] = 0
             self._refresh(tab, quiet=True)
             adopted.append(self._tab_info(tab).to_dict())
+            self.runtime.emit(
+                "popup_detected", tab_id=tab.tab_id, url=tab.url
+            )
             logger.info("browser adopted popup tab: %s", tab.tab_id)
         return adopted
 
@@ -357,13 +377,16 @@ class BrowserController:
         self._active_tab_id = tab.tab_id
         self._refresh(tab)
         self._record_history("select_tab", tab)
+        self.runtime.emit(
+            "tab_selected", tab_id=tab.tab_id, url=tab.url
+        )
         return self._tab_info(tab).to_dict()
 
     def close_tab(self, tab_id: str | None = None) -> dict[str, Any]:
         """Close a tab (the active one by default)."""
         tab = self._resolve_tab(tab_id)
         try:
-            self._backend.close_page(tab.handle)
+            self.runtime.close_page(tab.handle)
         except Exception as e:
             raise BrowserException(
                 f"Could not close tab {tab.tab_id!r}: {e}",
@@ -383,6 +406,7 @@ class BrowserController:
             self._active_tab_id = (
                 next(reversed(self._tabs)) if self._tabs else None
             )
+        self.runtime.emit("tab_closed", tab_id=tab.tab_id)
         logger.info("browser tab closed: %s", tab.tab_id)
         return {"closed_tab": tab.tab_id, "active_tab": self._active_tab_id}
 
@@ -409,7 +433,7 @@ class BrowserController:
     def reload(self, tab_id: str | None = None) -> dict[str, Any]:
         tab = self._resolve_tab(tab_id)
         try:
-            self._backend.reload(tab.handle)
+            self.runtime.reload(tab.handle)
         except Exception as e:
             raise BrowserException(
                 f"Could not reload tab {tab.tab_id!r}: {e}",
@@ -490,7 +514,7 @@ class BrowserController:
         self._ratelimit_check(tab)
         sensitivity = self._gate_check("browser_click", tab, info)
         self._do(
-            lambda: self._backend.click_element(
+            lambda: self.runtime.click_element(
                 tab.handle, record["handle"], self._timeout(timeout_ms)
             ),
             "click",
@@ -534,14 +558,14 @@ class BrowserController:
         )
         if clear_first:
             self._do(
-                lambda: self._backend.clear_element(
+                lambda: self.runtime.clear_element(
                     tab.handle, record["handle"], self._timeout(timeout_ms)
                 ),
                 "clear",
                 record,
             )
         self._do(
-            lambda: self._backend.fill_element(
+            lambda: self.runtime.fill_element(
                 tab.handle, record["handle"], text, self._timeout(timeout_ms)
             ),
             "type into",
@@ -579,7 +603,7 @@ class BrowserController:
             )
         self._gate_check("browser_clear", tab, info)
         self._do(
-            lambda: self._backend.clear_element(
+            lambda: self.runtime.clear_element(
                 tab.handle, record["handle"], self._timeout(timeout_ms)
             ),
             "clear",
@@ -609,7 +633,7 @@ class BrowserController:
             )
         self._gate_check("browser_select_option", tab, info)
         self._do(
-            lambda: self._backend.select_option(
+            lambda: self.runtime.select_option(
                 tab.handle, record["handle"], value,
                 self._timeout(timeout_ms),
             ),
@@ -650,7 +674,7 @@ class BrowserController:
                 arguments={"key": str(key)},
             )
         self._do(
-            lambda: self._backend.press_key(
+            lambda: self.runtime.press_key(
                 tab.handle, element_handle, str(key),
                 self._timeout(timeout_ms),
             ),
@@ -704,7 +728,7 @@ class BrowserController:
             arguments={"path": str(path)},
         )
         self._do(
-            lambda: self._backend.set_input_files(
+            lambda: self.runtime.set_input_files(
                 tab.handle, record["handle"], str(path),
                 self._timeout(timeout_ms),
             ),
@@ -747,7 +771,7 @@ class BrowserController:
         if target:
             tab, record, info = self._prepare_interaction(tab_id, target)
             self._do(
-                lambda: self._backend.scroll_to_element(
+                lambda: self.runtime.scroll_to_element(
                     tab.handle, record["handle"]
                 ),
                 "scroll to",
@@ -757,7 +781,7 @@ class BrowserController:
             return result
         tab = self._resolve_tab(tab_id)
         self._do(
-            lambda: self._backend.scroll_page(tab.handle, int(dx), int(dy)),
+            lambda: self.runtime.scroll_page(tab.handle, int(dx), int(dy)),
             "scroll page",
             {"ref": None},
         )
@@ -788,7 +812,7 @@ class BrowserController:
         tab = self._resolve_tab(tab_id)
         page = self.current_page(tab.tab_id)
         try:
-            text = self._backend.page_text(tab.handle)
+            text = self.runtime.page_text(tab.handle)
         except BrowserException:
             raise
         except Exception as e:
@@ -798,7 +822,7 @@ class BrowserController:
                 details={"tab_id": tab.tab_id},
             ) from e
         try:
-            handles = self._backend.interactive_elements(
+            handles = self.runtime.interactive_elements(
                 tab.handle, max(1, min(int(max_elements), 100))
             )
         except BrowserException:
@@ -814,7 +838,7 @@ class BrowserController:
         # Dialogs the page raised (recorded + dismissed by the
         # driver): surfaced as observation, never acted on.
         try:
-            dialogs = self._backend.dialogs(tab.handle)
+            dialogs = self.runtime.dialogs(tab.handle)
         except Exception:
             dialogs = []
 
@@ -840,6 +864,10 @@ class BrowserController:
         ).hexdigest()
         changed = self._observations.get(tab.tab_id) != fingerprint
         self._observations[tab.tab_id] = fingerprint
+        if changed:
+            self.runtime.emit(
+                "page_changed", tab_id=tab.tab_id, url=page["url"]
+            )
 
         logger.info(
             "browser observed tab %s: %d elements, changed=%s",
@@ -889,7 +917,7 @@ class BrowserController:
         nodes: list[dict[str, Any]] = []
         source = "accessibility"
         try:
-            raw = self._backend.accessibility_snapshot(tab.handle)
+            raw = self.runtime.accessibility_snapshot(tab.handle)
             nodes = normalize_snapshot(raw)
         except BrowserException:
             nodes = []
@@ -992,7 +1020,7 @@ class BrowserController:
         tab = self._resolve_tab(tab_id)
         doc: dict[str, Any] = {}
         try:
-            doc = self._backend.page_content(tab.handle) or {}
+            doc = self.runtime.page_content(tab.handle) or {}
         except BrowserException:
             doc = {}
         except Exception:
@@ -1061,7 +1089,7 @@ class BrowserController:
         tab = self._resolve_tab(tab_id)
         timeout = self._timeout(timeout_ms)
         try:
-            self._backend.wait_for(tab.handle, spec, timeout)
+            self.runtime.wait_for(tab.handle, spec, timeout)
         except BrowserException:
             raise
         except Exception as e:
@@ -1091,7 +1119,7 @@ class BrowserController:
         tab = self._resolve_tab(tab_id)
         probe: dict[str, Any] | None = None
         try:
-            raw = self._backend.page_probe(tab.handle)
+            raw = self.runtime.page_probe(tab.handle)
             if isinstance(raw, dict) and raw:
                 probe = {
                     "url": str(raw.get("url") or tab.url),
@@ -1109,13 +1137,13 @@ class BrowserController:
         if probe is None:
             text = ""
             try:
-                text = self._backend.page_text(tab.handle) or ""
+                text = self.runtime.page_text(tab.handle) or ""
             except Exception:
                 text = ""
             element_count = 0
             try:
                 element_count = len(
-                    self._backend.interactive_elements(tab.handle)
+                    self.runtime.interactive_elements(tab.handle)
                     or []
                 )
             except Exception:
@@ -1210,7 +1238,7 @@ class BrowserController:
         failed capture is an error, never a fake success."""
         tab = self._resolve_tab(tab_id)
         try:
-            data = self._backend.screenshot(tab.handle)
+            data = self.runtime.screenshot(tab.handle)
         except BrowserException:
             raise
         except Exception as e:
@@ -1303,7 +1331,7 @@ class BrowserController:
 
     def _query(self, tab: _Tab, locator: dict[str, Any], limit: int):
         try:
-            return self._backend.query_elements(
+            return self.runtime.query_elements(
                 tab.handle, locator, max(1, min(int(limit), 50))
             )
         except BrowserException:
@@ -1329,7 +1357,7 @@ class BrowserController:
 
     def _read_info(self, tab: _Tab, record: dict[str, Any]) -> ElementInfo:
         try:
-            data = self._backend.element_info(tab.handle, record["handle"])
+            data = self.runtime.element_info(tab.handle, record["handle"])
         except BrowserException:
             raise
         except Exception as e:
@@ -1560,12 +1588,61 @@ class BrowserController:
         """
         tab = self._resolve_tab(tab_id)
         try:
-            events = self._backend.network_events(tab.handle)
+            events = self.runtime.network_events(tab.handle)
         except Exception:
             events = []
         summary = summarize_network(events or [], page_url=tab.url)
         summary["tab_id"] = tab.tab_id
         return summary
+
+    def capabilities(self) -> dict[str, Any]:
+        """Afnan-level browser capabilities (via the runtime).
+
+        The agent sees what the *Afnan* browser stack can do —
+        never raw engine features.  Runtime/engine capabilities
+        are merged with the controller's own (semantic location,
+        structured observation).
+        """
+        caps = dict(self.runtime.capabilities())
+        caps.update({
+            "semantic_locator": True,
+            "accessibility": True,
+            "page_observation": True,
+            "multi_tab": True,
+            "visual_interaction": False,
+        })
+        return {
+            "adapter": self.runtime.name,
+            "session_id": self.runtime.session.session_id,
+            "profile_id": self.runtime.session.profile_id,
+            "capabilities": caps,
+            "observation": {
+                "type": "browser_capabilities",
+                "summary": (
+                    "Browser capabilities via AfnanBrowserRuntime "
+                    f"({self.runtime.name}): "
+                    + ", ".join(
+                        k for k, v in sorted(caps.items()) if v
+                    )
+                ),
+            },
+        }
+
+    def events(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Recent browser runtime events (started, tabs,
+        navigation, downloads, errors...)."""
+        return self.runtime.events(limit)
+
+    def recover_browser(self) -> dict[str, Any]:
+        """Restart a crashed browser engine via the runtime and
+        report which tabs are recoverable (never auto-reopens
+        them; the task decides)."""
+        result = self.runtime.recover()
+        if result.success:
+            self._tabs.clear()
+            self._active_tab_id = None
+            self._elements.clear()
+        return result.to_dict()
 
     def rate_limit_status(
         self, tab_id: str | None = None
@@ -1730,7 +1807,7 @@ class BrowserController:
         clean = self._sanitize_preferences(preferences)
         # driver context first: if the backend cannot isolate
         # profiles, nothing is registered here either
-        self._backend.create_profile_context(name, clean)
+        self.runtime.create_profile_context(name, clean)
         self._profiles[name] = {
             "name": name,
             "preferences": clean,
@@ -1751,7 +1828,7 @@ class BrowserController:
         if name == self._active_profile:
             return self._profile_info(name)
         # backend first: a failed switch leaves state untouched
-        self._backend.set_active_profile(name)
+        self.runtime.set_active_profile(name)
         self._profile_tabs[self._active_profile] = (
             self._tabs,
             self._active_tab_id,
@@ -1896,7 +1973,7 @@ class BrowserController:
             "running": self._running,
             "launched": launched,
             "browser": self._browser_name,
-            "backend": self._backend.name,
+            "backend": self.runtime.name,
             "endpoint": self._endpoint,
             "tabs": len(self._tabs),
             "active_tab": self._active_tab_id,
@@ -1938,7 +2015,7 @@ class BrowserController:
     def _goto(self, tab: _Tab, url: str) -> None:
         url = self._validate_url(url)
         try:
-            self._backend.goto(tab.handle, url)
+            self.runtime.goto(tab.handle, url)
         except BrowserException:
             raise
         except Exception as e:
@@ -1970,7 +2047,7 @@ class BrowserController:
         self, kind: str, tab_id: str | None
     ) -> dict[str, Any]:
         tab = self._resolve_tab(tab_id)
-        method = self._backend.go_back if kind == "back" else self._backend.go_forward
+        method = self.runtime.go_back if kind == "back" else self.runtime.go_forward
         try:
             method(tab.handle)
         except Exception as e:
@@ -1988,8 +2065,8 @@ class BrowserController:
 
     def _refresh(self, tab: _Tab, *, quiet: bool = False) -> None:
         try:
-            tab.url = self._backend.page_url(tab.handle) or tab.url
-            tab.title = self._backend.page_title(tab.handle) or tab.title
+            tab.url = self.runtime.page_url(tab.handle) or tab.url
+            tab.title = self.runtime.page_title(tab.handle) or tab.title
         except Exception as e:
             if quiet:
                 return
