@@ -240,9 +240,22 @@ class Planner:
         self,
         llm_provider: LLMProvider,
         tool_registry: ToolRegistry | Iterable[Tool] | None = None,
+        *,
+        max_parse_retries: int = 1,
     ):
+        if (
+            isinstance(max_parse_retries, bool)
+            or not isinstance(max_parse_retries, int)
+            or max_parse_retries < 0
+        ):
+            raise ValueError(
+                "max_parse_retries must be a non-negative integer"
+            )
         self.llm = llm_provider
         self.tools = self._as_registry(tool_registry)
+        # Bounded self-repair: one invalid reply earns exactly
+        # one corrected re-ask — never an infinite retry loop.
+        self.max_parse_retries = max_parse_retries
 
     @staticmethod
     def _as_registry(tools) -> ToolRegistry | None:
@@ -258,6 +271,7 @@ class Planner:
         state: AgentState | None = None,
         tools: ToolRegistry | Iterable[Tool] | None = None,
         recovery_context: str | None = None,
+        extra_context: str | None = None,
     ) -> TaskPlan:
         """Return a validated TaskPlan for *goal*.
 
@@ -289,9 +303,28 @@ class Planner:
             state=state,
             catalog=catalog,
             recovery_context=recovery_context,
+            extra_context=extra_context,
         )
         raw = self._ask_llm(prompt)
-        return self.parse_plan(raw, goal=goal, state=state, catalog=catalog)
+        try:
+            return self.parse_plan(raw, goal=goal, state=state, catalog=catalog)
+        except PlanningError as e:
+            if (
+                e.code != PlannerErrorCode.INVALID_LLM_OUTPUT
+                or self.max_parse_retries < 1
+            ):
+                raise
+            # Bounded repair: show the model its own mistake and
+            # ask once more for exactly one valid JSON object.
+            repair_prompt = (
+                prompt
+                + "\n\nYour previous reply was not a valid plan "
+                f"({e.error.message}). Reply again with exactly "
+                "one valid JSON object in the required shape and "
+                "no other text."
+            )
+            raw = self._ask_llm(repair_prompt)
+            return self.parse_plan(raw, goal=goal, state=state, catalog=catalog)
 
     # Backwards/alternate naming
     create_plan = plan
@@ -306,6 +339,7 @@ class Planner:
         tools: ToolRegistry | Iterable[Tool] | None = None,
         catalog: dict[str, dict[str, Any]] | None = None,
         recovery_context: str | None = None,
+        extra_context: str | None = None,
     ) -> str:
         catalog = catalog or self._catalog(
             self._as_registry(tools) or self.tools
@@ -352,13 +386,18 @@ class Planner:
                 "already completed.\n"
             )
 
+        extra_text = ""
+        if extra_context:
+            extra_text = f"\nAdditional guidance:\n{extra_context}\n"
+
         return (
             "You are the planning component of Afnan AI. "
             "Create a plan only — do not execute anything and do not "
             "claim that any action has been taken.\n\n"
             f"User goal: {goal}\n\n"
             f"Current agent state:\n{state_text}\n"
-            f"{recovery_text}\n"
+            f"{recovery_text}"
+            f"{extra_text}\n"
             f"Available tools (use only these tool_name values):\n"
             f"{tools_text}\n\n"
             "Reply with exactly one JSON object and no other text, "
@@ -371,7 +410,11 @@ class Planner:
             "]}\n"
             "Every step must have step_id, description, tool_name, "
             "arguments and expected_result. step_id values must be "
-            "unique. Arguments must satisfy the tool's schema."
+            "unique. Arguments must satisfy the tool's schema.\n"
+            "If the goal is already achieved according to the "
+            "current state, reply instead with "
+            '{"goal": "<the goal>", "complete": true, "steps": []} '
+            "and no steps."
         )
 
     # -- LLM call ---------------------------------------------------------------
@@ -427,6 +470,20 @@ class Planner:
             self._as_registry(tools) or self.tools
         )
         data = self._parse_json(raw)
+        if data.get("complete") is True and not data.get("steps"):
+            # The model reports the goal already achieved — a
+            # valid empty plan for the iterative loop, marked so
+            # callers can tell it apart from a planning failure.
+            return TaskPlan(
+                goal=goal,
+                steps=[],
+                task_id=state.task_id if state is not None else None,
+                metadata={
+                    "source": "planner",
+                    "task_complete": True,
+                    "tools_available": sorted(catalog),
+                },
+            )
         steps = self._validate_steps(data, catalog)
         return TaskPlan(
             goal=goal,
@@ -463,14 +520,14 @@ class Planner:
                 code=PlannerErrorCode.INVALID_LLM_OUTPUT,
                 details={"received": type(data).__name__},
             )
-        unknown = set(data) - {"goal", "steps"}
+        unknown = set(data) - {"goal", "steps", "complete"}
         if unknown:
             raise PlanningError(
                 f"LLM output has unknown top-level field(s): {sorted(unknown)}",
                 code=PlannerErrorCode.INVALID_LLM_OUTPUT,
                 details={"unknown": sorted(unknown)},
             )
-        if "steps" not in data:
+        if "steps" not in data and data.get("complete") is not True:
             raise PlanningError(
                 "LLM output is missing 'steps'",
                 code=PlannerErrorCode.INVALID_LLM_OUTPUT,
