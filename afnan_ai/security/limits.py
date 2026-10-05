@@ -179,3 +179,147 @@ class RateLimiter:
         self.record_denial(key)
         return {"ok": False, "code": code,
                 "reason": reason}
+
+
+# ---------------------------------------------------------------------------
+# Resource limits: per task/agent/subagent/skill/connector/browser session/
+# background worker — max steps, runtime, tool calls, retries, network
+# requests, resource usage and concurrent operations.  Exceeding a limit
+# pauses or terminates safely; it never fails open.
+
+
+@dataclass
+class ResourceLimits:
+    max_steps: int = 200
+    max_runtime_s: float = 3600.0
+    max_tool_calls: int = 500
+    max_retries: int = 5
+    max_network_requests: int = 200
+    max_concurrent_ops: int = 4
+    max_memory_mb: int = 1024
+
+
+@dataclass
+class _ResourceUsage:
+    steps: int = 0
+    tool_calls: int = 0
+    retries: int = 0
+    network_requests: int = 0
+    concurrent_ops: int = 0
+    started_at: float = field(
+        default_factory=time.monotonic
+    )
+
+
+class ResourceGovernor:
+    """Enforces ResourceLimits per scope key."""
+
+    def __init__(
+        self, limits: ResourceLimits | None = None
+    ) -> None:
+        self.limits = limits or ResourceLimits()
+        self._usage: dict[str, _ResourceUsage] = {}
+        self._lock = threading.RLock()
+
+    def _get(self, key: str) -> _ResourceUsage:
+        with self._lock:
+            return self._usage.setdefault(
+                key, _ResourceUsage()
+            )
+
+    def check(self, key: str) -> dict[str, Any]:
+        usage = self._get(key)
+        limits = self.limits
+        now = time.monotonic()
+        with self._lock:
+            if usage.steps >= limits.max_steps:
+                return self._over(
+                    "max_steps", usage.steps, limits.max_steps
+                )
+            if usage.tool_calls >= limits.max_tool_calls:
+                return self._over(
+                    "max_tool_calls", usage.tool_calls,
+                    limits.max_tool_calls,
+                )
+            if usage.retries >= limits.max_retries:
+                return self._over(
+                    "max_retries", usage.retries,
+                    limits.max_retries,
+                )
+            if (
+                usage.network_requests
+                >= limits.max_network_requests
+            ):
+                return self._over(
+                    "max_network_requests",
+                    usage.network_requests,
+                    limits.max_network_requests,
+                )
+            if (
+                usage.concurrent_ops
+                >= limits.max_concurrent_ops
+            ):
+                return self._over(
+                    "max_concurrent_ops",
+                    usage.concurrent_ops,
+                    limits.max_concurrent_ops,
+                )
+            if now - usage.started_at >= limits.max_runtime_s:
+                return {
+                    "ok": False,
+                    "code": "max_runtime",
+                    "limit": "max_runtime_s",
+                    "reason": "runtime budget exhausted",
+                    "pause": True,
+                }
+            return {"ok": True, "code": "ok", "pause": False}
+
+    def record_step(self, key: str) -> None:
+        with self._lock:
+            self._get(key).steps += 1
+
+    def record_tool_call(self, key: str) -> None:
+        with self._lock:
+            self._get(key).tool_calls += 1
+
+    def record_retry(self, key: str) -> None:
+        with self._lock:
+            self._get(key).retries += 1
+
+    def record_network_request(self, key: str) -> None:
+        with self._lock:
+            self._get(key).network_requests += 1
+
+    def acquire_op(self, key: str) -> bool:
+        with self._lock:
+            usage = self._get(key)
+            if (
+                usage.concurrent_ops
+                >= self.limits.max_concurrent_ops
+            ):
+                return False
+            usage.concurrent_ops += 1
+            return True
+
+    def release_op(self, key: str) -> None:
+        with self._lock:
+            usage = self._get(key)
+            usage.concurrent_ops = max(
+                0, usage.concurrent_ops - 1
+            )
+
+    def reset(self, key: str) -> None:
+        with self._lock:
+            self._usage.pop(key, None)
+
+    @staticmethod
+    def _over(
+        limit: str, used: int, allowed: int
+    ) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "code": limit,
+            "limit": limit,
+            "reason": f"{used} exceeds {limit}={allowed}",
+            "pause": True,
+        }

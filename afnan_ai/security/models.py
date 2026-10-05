@@ -148,6 +148,7 @@ class AuthDecision:
     reason: str = ""
     approval_request: ApprovalRequest | None = None
     required_capability: str = ""
+    policy_version: str = ""
 
     @classmethod
     def allow(

@@ -159,3 +159,108 @@ class EnvCredentialVault(CredentialVault):
 
     def owners(self) -> list[str]:
         return []
+
+
+# ---------------------------------------------------------------------------
+# Operation leases: the agent never receives raw credential values.
+# Instead it holds a single-use lease token describing an approved
+# operation; only the vault (or a trusted connector redeeming through
+# the vault) can resolve it — and every redemption is audited.
+
+
+class CredentialLease:
+    def __init__(
+        self, token: str, owner: str, name: str,
+        operation: str, expires_at: float,
+    ) -> None:
+        self.token = token
+        self.owner = owner
+        self.name = name
+        self.operation = operation
+        self.expires_at = expires_at
+        self.redeemed = False
+
+
+class LeasedCredentialVault(MemoryCredentialVault):
+    """Vault with operation leases on top of storage."""
+
+    def __init__(
+        self,
+        on_access=None,
+    ) -> None:
+        super().__init__(on_access=on_access)
+        self._leases: dict[str, CredentialLease] = {}
+        self._lease_counter = 0
+
+    def lease_credential(
+        self, owner: str, name: str, operation: str,
+        *, ttl_s: float = 300.0,
+    ) -> str:
+        """Issue a single-use lease token for an approved
+        operation.  The token reveals nothing; redemption
+        resolves the value once, then burns the token."""
+        import time as _time
+        import uuid as _uuid
+
+        if not self.has(owner, name):
+            raise KeyError(
+                f"no credential {owner}/{name} in vault"
+            )
+        with self._lock:
+            self._lease_counter += 1
+            token = f"lease-{_uuid.uuid4().hex[:16]}"
+            self._leases[token] = CredentialLease(
+                token=token,
+                owner=str(owner),
+                name=str(name),
+                operation=str(operation),
+                expires_at=_time.time() + float(ttl_s),
+            )
+            return token
+
+    def redeem(self, token: str) -> str | None:
+        """Resolve a lease token once.  Returns None for
+        unknown, expired or already-redeemed tokens."""
+        import time as _time
+
+        with self._lock:
+            lease = self._leases.get(token)
+            if lease is None:
+                return None
+            if lease.redeemed:
+                return None
+            if _time.time() >= lease.expires_at:
+                del self._leases[token]
+                return None
+            lease.redeemed = True
+            ref = self._ref_for(lease.owner, lease.name)
+            value = (
+                self._secrets.get(ref, {}).get("value")
+                if ref
+                else None
+            )
+            del self._leases[token]
+        if (
+            value is not None
+            and self._on_access is not None
+        ):
+            try:
+                self._on_access(
+                    lease.owner,
+                    lease.name,
+                    f"lease:{lease.operation}",
+                )
+            except Exception:
+                pass
+        return value
+
+    def _ref_for(
+        self, owner: str, name: str
+    ) -> str | None:
+        for ref, entry in self._secrets.items():
+            if (
+                entry["owner"] == owner
+                and entry["name"] == name
+            ):
+                return ref
+        return None

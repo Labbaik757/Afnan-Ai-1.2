@@ -75,6 +75,7 @@ class AuditLogger:
         approval_status: str = "",
         execution_result: str = "",
         verification_result: str = "",
+        policy_version: str = "",
         details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         record = {
@@ -92,6 +93,7 @@ class AuditLogger:
             "verification_result": str(
                 verification_result
             )[:120],
+            "policy_version": str(policy_version)[:64],
             "details": redact_value(details or {}),
             "prev_hash": self._last_hash,
         }
