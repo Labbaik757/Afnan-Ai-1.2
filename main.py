@@ -164,6 +164,19 @@ def get_browser_reliability():
     return _agent.browser_reliability
 
 
+def get_approval_gate():
+    """Return the browser ApprovalGate (sensitive-action policy
+    plus recorded approval decisions)."""
+    return _agent.browser.approval_gate
+
+
+def set_browser_approver(approver):
+    """Set the human approver for sensitive browser actions
+    (a callable ApprovalRequest -> bool; None restores the
+    fail-safe refusal)."""
+    _agent.set_browser_approver(approver)
+
+
 def listen_command(timeout=5, phrase_time=6):
     return _agent.listen_command(timeout=timeout, phrase_time=phrase_time)
 

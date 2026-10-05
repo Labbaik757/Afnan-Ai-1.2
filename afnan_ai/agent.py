@@ -22,6 +22,7 @@ from pathlib import Path
 from afnan_ai import speech as _speech
 from afnan_ai.browser import BrowserController, register_browser_tools
 from afnan_ai.browser.reliability import BrowserReliability
+from afnan_ai.browser.security import ApprovalGate
 from afnan_ai.config import AgentConfig
 from afnan_ai.executor import ExecutionReport, Executor
 from afnan_ai.llm import LLMProvider, get_default_provider
@@ -81,6 +82,8 @@ class AfnanAgent:
         config: AgentConfig | None = None,
         browser_controller: BrowserController | None = None,
         enable_browser_tools: bool = True,
+        browser_approver=None,
+        security_policy=None,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -99,6 +102,14 @@ class AfnanAgent:
         self.browser: BrowserController = (
             browser_controller or BrowserController()
         )
+        # Human approval for sensitive browser actions (purchases,
+        # sends, destructive clicks, uploads...).  Without an
+        # approver, sensitive actions are refused with a
+        # structured approval_required error — never auto-allowed.
+        if browser_approver is not None or security_policy is not None:
+            self.browser.approval_gate = ApprovalGate(
+                policy=security_policy, approver=browser_approver
+            )
         if enable_browser_tools:
             register_browser_tools(self.tools, self.browser)
         # The agent talks to a model only through the LLMProvider
@@ -224,6 +235,17 @@ class AfnanAgent:
         return result
 
     def get_tool(self, name: str):
+        return self.tools.get_or_none(name)
+
+    def set_browser_approver(self, approver) -> None:
+        """Set the human approver for sensitive browser actions.
+
+        ``approver`` is a callable taking an ApprovalRequest and
+        returning True to allow the action.  Setting it to None
+        restores the fail-safe default: sensitive browser actions
+        are refused until a human approves them.
+        """
+        self.browser.approval_gate.approver = approver
         return self.tools.get(name)
 
     def list_tools(self):

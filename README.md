@@ -727,6 +727,45 @@ completion, blind-repeat rejection, navigation-failure
 recovery, unexpected-popup recovery, dynamic-content wait) live
 in `tests/test_browser_reliability.py`.
 
+## Security: approval gate + secret hygiene
+
+Irreversible browser actions are gated by a human, and secrets
+stay out of every record:
+
+- **Sensitive-action classification** (`afnan_ai/browser/security.py`)
+  — purchases, payments, message/email sends, account changes,
+  destructive clicks, form submits, file uploads and
+  credential/payment-field entry are classified from the tool,
+  the target element (its text, type and attributes) and the
+  page before anything runs.
+- **Configurable human approval** — an `ApprovalGate` with a
+  `SecurityPolicy` decides: safe actions run; sensitive ones run
+  only when a human approver says yes. With no approver
+  configured they **do not run at all** — they fail with the
+  structured `approval_required`/`approval_denied` browser
+  errors, recorded like any other failure. Set the approver via
+  `main.set_browser_approver(fn)` / `agent.set_browser_approver(fn)`,
+  the policy via the `security_policy=` argument. A new
+  `browser_upload_file` tool is gated the same way, and locators
+  can target iframes (`frame` key; CSS pierces open shadow DOM).
+- **Redaction** (`afnan_ai/redaction.py`) — password fields
+  report `***` instead of their contents, and AgentState tool
+  results, step/plan records, recovery context, approval
+  requests and planner prompts pass through the redactor, so
+  credentials, tokens, cookies and card numbers never land in
+  state, logs or model prompts. Execution always uses the real
+  values; only records are sanitized.
+- **Stress-tested** — long multi-step tasks, failed clicks,
+  stale elements, popups, session redirects, timeouts, failed
+  downloads/uploads, auth-failure recovery, iframe/shadow-DOM,
+  approval enforcement, secret scans and backend crashes are
+  covered in `tests/test_browser_stress.py` and
+  `tests/test_browser_security.py`, including an acceptance
+  suite for the six guarantees (tasks complete; failures
+  recover or terminate; no sensitive action without approval;
+  no secret exposure; failures never crash the agent;
+  Windows/Linux/macOS architecture intact).
+
 # 🏁 Phase 1 Status — Clean, Tested, Cross-Platform
 
 Phase 1 (the core agent architecture) is complete and verified
