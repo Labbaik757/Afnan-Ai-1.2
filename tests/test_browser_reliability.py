@@ -712,7 +712,13 @@ class TestAgentWiring(unittest.TestCase):
             llm_provider=QueueLLM(["{}"]), enable_browser_tools=False
         )
         self.assertIsNone(agent.browser_reliability)
-        self.assertIsNone(agent.verifier.observation_provider)
+        # the Verifier's combined observation provider must hand
+        # browser steps nothing when browser tools are disabled
+        class _Step:
+            tool_name = "browser_click"
+        provider = agent.verifier.observation_provider
+        self.assertIsNotNone(provider)
+        self.assertIsNone(provider(_Step()))
 
 
 if __name__ == "__main__":

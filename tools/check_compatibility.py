@@ -142,6 +142,38 @@ def main() -> int:
     else:
         print("OK: security + redaction layers are platform/driver agnostic")
 
+    # ---- ScreenObserver: isolated, tool surface fixed ---------------------
+    screen_dir = ROOT / "afnan_ai" / "screen"
+    coupling = []
+    for path in sorted(screen_dir.glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        for bad in ("import pyautogui", "import playwright",
+                    "sys.platform", "startfile"):
+            if bad in source:
+                coupling.append(f"{path.name}:{bad}")
+    if coupling:
+        failures.append(f"screen layer has platform/driver coupling: {coupling}")
+        print(f"FAIL: screen layer coupling: {coupling}")
+    else:
+        print("OK: screen layer is platform/driver agnostic (capture is injected)")
+
+    try:
+        from afnan_ai.screen import ScreenObserver, create_screen_tools
+        observer = ScreenObserver()
+        screen_names = sorted(t.name for t in create_screen_tools(observer))
+    except Exception as e:  # noqa: BLE001 - report, don't crash the checker
+        failures.append(f"screen tools unavailable: {e}")
+        print(f"FAIL: screen tools unavailable: {e}")
+    else:
+        expected_screen = [
+            "screen_assess_action", "screen_find_elements", "screen_observe",
+        ]
+        if screen_names != expected_screen:
+            failures.append(f"screen tools mismatch: {screen_names}")
+            print(f"FAIL: screen tools are {screen_names}")
+        else:
+            print(f"OK: screen tools are {screen_names} (observer never clicks)")
+
     # The central Agent orchestrator must drive tools only through
     # the Executor — it must never reach the ToolRegistry, a tool,
     # or the platform adapter directly.
