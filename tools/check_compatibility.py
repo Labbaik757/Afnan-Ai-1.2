@@ -278,6 +278,9 @@ def main() -> int:
             "browser_scroll", "browser_observe_page",
             "browser_wait_for", "browser_screenshot",
             "browser_upload_file",
+            "browser_accessibility_tree", "browser_find_semantic",
+            "browser_set_tab_purpose", "browser_extract_content",
+            "browser_search", "browser_open_result",
         }
         if set(browser_tool_names) != expected_browser_tools:
             failures.append(f"browser tools mismatch: {browser_tool_names}")
