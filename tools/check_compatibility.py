@@ -688,6 +688,64 @@ def main() -> int:
     else:
         print("OK: AgentLoop stays proactive-agnostic")
 
+    # ---- Security Center ------------------------------------------------
+    # Security lives in afnan_ai/security and knows nothing
+    # about browser/computer/connector/playwright, the loop,
+    # or the artifact/subagent/proactive systems.  The loop
+    # stays security-agnostic: the ToolRegistry consults the
+    # center (when attached) before every tool call.
+    security_dir = ROOT / "afnan_ai" / "security"
+    security_coupling = []
+    for path in sorted(security_dir.glob("*.py")):
+        source = path.read_text()
+        for bad in (
+            "afnan_ai.browser", "afnan_ai.computer",
+            "afnan_ai.connectors", "afnan_ai.agent_loop",
+            "afnan_ai.artifacts", "afnan_ai.subagents",
+            "afnan_ai.proactive", "playwright",
+        ):
+            if bad in source:
+                security_coupling.append(f"{path.name}:{bad}")
+                break
+    if security_coupling:
+        failures.append(
+            f"security layer coupling: {security_coupling}"
+        )
+        print(
+            f"FAIL: security layer coupling: {security_coupling}"
+        )
+    else:
+        print("OK: security layer is decoupled (no browser/computer/connector/loop imports)")
+
+    if "afnan_ai.security" in loop_source:
+        failures.append("agent_loop imports the security package")
+        print(
+            "FAIL: agent_loop.py references afnan_ai.security"
+        )
+    else:
+        print("OK: AgentLoop stays security-agnostic")
+
+    try:
+        from afnan_ai.security import (
+            SecurityCenter, PermissionManager, RiskLevel,
+            classify_action, AuditLogger, TrustLevel,
+        )
+        _center = SecurityCenter()
+        _center.grant_agent_capabilities("note.*", "search.*")
+        _d = _center.authorize(
+            tool_name="note_save",
+            arguments={"text": "hello"},
+        )
+        assert _d.action == "allow", _d
+        _d2 = _center.authorize(tool_name="email_send")
+        assert _d2.action == "deny", _d2
+        assert classify_action("browser_read") is RiskLevel.READ_ONLY
+        assert classify_action("file_delete") is RiskLevel.IRREVERSIBLE
+        print("OK: security package imports cleanly")
+    except Exception as e:  # noqa: BLE001 - report, don't crash
+        failures.append(f"security smoke check crashed: {e}")
+        print(f"FAIL: security smoke check crashed: {e}")
+
     try:
         from afnan_ai.proactive import (
             ProactiveConfig, ProactiveEngine, Idea,
