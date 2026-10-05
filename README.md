@@ -1923,6 +1923,108 @@ Tool architecture (35 browser tools total):
 Phase 1 (the core agent architecture) is complete and verified
 end to end:
 
+# 🗂️ Secure Agent Workspace & Persistent Runtime
+
+Every long-running task runs inside a **SecureWorkspace** —
+an isolated, persistent, policy-controlled execution
+environment that binds Browser, Computer Control, Files,
+Connectors and the AgentLoop together.
+
+**Architecture**
+
+```text
+User Goal → Agent → TaskManager → SecureWorkspace → AgentLoop
+    → Browser / Computer / Files / Connectors
+    → Observation → Verification → Checkpoint → Completion
+```
+
+**Package `afnan_ai/workspace/`**
+
+- `models.py` — `Workspace`, `WorkspaceConfig`,
+  `WorkspaceSession`, `WorkspaceSnapshot`,
+  `WorkspacePolicy`, `WorkspaceResourceLimits`,
+  `WorkspaceNetworkPolicy`, `WorkspaceEvent`,
+  `WorkspaceStatus` (10 states), `CleanupMode`
+  (4 modes). OS-independent; every workspace has a unique
+  id, owner/task association, isolated working / temp /
+  persistent / browser-profile directories, environment
+  config, resource limits, network policy, allowed
+  capabilities and lifecycle status.
+- `manager.py` — `WorkspaceManager`: full lifecycle
+  (`create`, `start`, `pause`, `resume`, `stop`,
+  `restart`, `recover`, `destroy`), disk-persisted
+  registry (survives machine restarts), integrity-checked
+  snapshots, stale-lock cleanup, global + per-workspace
+  emergency stop (never auto-resumes), cleanup policies
+  (`EPHEMERAL`, `PERSISTENT`, `UNTIL_TASK_COMPLETE`,
+  `UNTIL_MANUAL_DELETE`), structured redacted audit
+  events, resource-limit enforcement, health checks,
+  metrics, and explicit controlled cross-workspace
+  handoff (both sides must opt in + authorize).
+- `file_manager.py` — `WorkspaceFileManager`: scoped
+  create/read/write/move/copy/delete/list/search/archive/
+  extract. Blocks `..` traversal, symlink escape,
+  absolute-path escape, cross-workspace access,
+  credential-shaped files (`.env`, `secrets.json`,
+  `id_rsa`, …), sensitive system directories and
+  zip/tar-slip on extract.
+- `network.py` — `WorkspaceNetworkGuard`: default-deny
+  network policy (allowed/blocked domains, allowed
+  protocols, per-connector host scoping) plus request and
+  upload/download budgets.
+- `sandbox.py` — `WorkspaceExecutionSandbox`: every
+  executable operation follows capability → permission →
+  resource → workspace → execute → capture → verify.
+  Arbitrary model-generated host code is never executed.
+- `health.py` — `WorkspaceHealthMonitor`: process,
+  browser, disk, memory, CPU, network, heartbeat, stale
+  workspace, failed subprocess and corrupted-state checks
+  with structured health events.
+- `platform.py` — `WindowsWorkspaceAdapter`,
+  `LinuxWorkspaceAdapter`, `MacOSWorkspaceAdapter`;
+  the core manager stays platform-independent.
+- `integration.py` — thin bindings that scope the
+  existing subsystems to a workspace without modifying
+  them: browser runtime kwargs (workspace profile +
+  downloads), artifact workspace kwargs, sandbox binding
+  gated by the workspace policy (+ optional
+  SecurityCenter), workspace-tagged tool runner, and
+  `WorkspaceTaskBinding` (TaskManager/BackgroundRunner
+  cycle: create/reuse → restore checkpoint → run loop →
+  verify → checkpoint → retain/stop per policy).
+
+**Security boundaries (enforced, tested)**
+
+- Task A can never read task B's workspace data.
+- Snapshots/checkpoints are checksum-protected and
+  **never contain secrets** (redacted before persistence).
+- Credentials live only in the central `CredentialVault`;
+  workspaces keep references, revoked on destroy.
+- Sensitive actions follow the existing
+  PermissionManager → human-approval flow; approval never
+  disables security controls.
+- External web/email/document content stays untrusted —
+  it cannot change permissions, authorize tools, touch
+  credentials or bypass approval (integrated with the
+  Security Center's injection defense).
+- Crash recovery identifies the last valid checkpoint and
+  the incomplete action, then resumes from observation —
+  completed work is never blindly repeated.
+
+**Recovery**
+
+Process crash, browser crash, connector failure, network
+drop or machine restart → the persisted registry marks
+the workspace for recovery → stale locks are cleaned →
+the latest integrity-verified snapshot is restored →
+the AgentLoop resumes from the incomplete action.
+
+Tests: `tests/test_workspace.py` (60 tests: lifecycle,
+path isolation, resource limits, network policy,
+credential protection, snapshots, emergency stop,
+cleanup, platform adapters, sandbox pipeline, health,
+integrations, failure injection, end-to-end).
+
 - **Full pipeline tested** — `tests/test_end_to_end.py` drives a
   goal through AgentState → Planner → Executor → Verifier →
   Recovery/Replanning → Completion/Failure, through the voice and
