@@ -23,6 +23,7 @@ from afnan_ai import speech as _speech
 from afnan_ai.browser import BrowserController, register_browser_tools
 from afnan_ai.browser.reliability import BrowserReliability
 from afnan_ai.browser.security import ApprovalGate
+from afnan_ai.browser.workflow import BrowserWorkflow
 from afnan_ai.checkpointing import CheckpointManager
 from afnan_ai.config import AgentConfig
 from afnan_ai.executor import ExecutionReport, Executor
@@ -217,6 +218,16 @@ class AfnanAgent:
             orchestrator.checkpoint_extra_provider = (
                 self._checkpoint_extra
             )
+        # Unified autonomous browser workflow: browser goals run
+        # through the same orchestrator with a browser briefing;
+        # the workflow plans/executes/judges nothing itself.
+        self.browser_workflow: BrowserWorkflow | None = (
+            BrowserWorkflow(
+                orchestrator=self.orchestrator, controller=self.browser
+            )
+            if self.browser is not None
+            else None
+        )
         # Recovery manager (owned by the orchestrator): replans
         # after failed/uncertain steps, attempts recorded in state
         self.recovery = self.orchestrator.recovery
@@ -484,6 +495,43 @@ class AfnanAgent:
         )
         self.state = result.state
         return result
+
+    # -- autonomous browser workflow ------------------------------------
+
+    def run_browser_goal(
+        self,
+        goal: str,
+        *,
+        profile: str | None = None,
+        max_iterations: int | None = None,
+        max_duration_s: float | None = None,
+    ):
+        """Run one autonomous browser goal end to end.
+
+        The existing orchestrator plans, executes, re-observes,
+        verifies and recovers; the BrowserWorkflow adds the
+        browser briefing (tabs, current page, profile) before
+        acting and composes the final answer from recorded
+        evidence (search results, extracted content, verified
+        steps, downloads).
+        """
+        if self.browser_workflow is None:
+            raise RuntimeError(
+                "Browser tools are disabled for this agent"
+            )
+        outcome = self.browser_workflow.run_goal(
+            goal,
+            profile=profile,
+            max_iterations=max_iterations,
+            max_duration_s=max_duration_s,
+        )
+        if outcome.state is not None:
+            self.state = outcome.state
+        return outcome
+
+    def get_browser_workflow(self):
+        """The BrowserWorkflow (None when browser tools are off)."""
+        return self.browser_workflow
 
     # Alias in goal vocabulary
     run_goal = run_task
