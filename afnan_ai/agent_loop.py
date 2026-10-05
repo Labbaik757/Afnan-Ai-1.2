@@ -255,6 +255,8 @@ class AgentLoop:
         memory_store: Any = None,
         goal_manager: Any = None,
         system_context_provider: Callable[[], str | None] | None = None,
+        context_manager_factory: Callable[[], Any] | None = None,
+        trajectory_store: Any | None = None,
     ):
         self.agent = agent
         self.observation_provider = observation_provider
@@ -268,6 +270,16 @@ class AgentLoop:
         # nothing about connectors — no connector-specific
         # orchestration lives here.
         self.system_context_provider = system_context_provider
+        # Long-context & trajectory reasoning (additive only).
+        # The factory builds one ContextManager per run(); the
+        # loop never imports the context package itself, so
+        # this stays a consumer of recorded context, not a
+        # second orchestration layer.
+        self._context_factory = context_manager_factory
+        self._trajectory_store = trajectory_store
+        self._ctx: Any | None = None
+        self._ctx_task_id: str | None = None
+        self._run_goal = ""
         self.events: list[LoopEvent] = []
         self.trajectory: list[dict[str, Any]] = []
         self._run_memories: list[str] = []
@@ -335,6 +347,32 @@ class AgentLoop:
         self.trajectory = list(
             task_state.metadata.get("trajectory") or []
         )
+        # Long-context & trajectory reasoning: one
+        # ContextManager per run keeps the unified working
+        # context (goal, sub-goals, relevant history,
+        # failures, decisions, facts); the trajectory store
+        # persists it per task for restart recovery.
+        self._run_goal = goal
+        self._ctx_task_id = task_state.task_id
+        ctx = (
+            self._context_factory()
+            if self._context_factory is not None
+            else None
+        )
+        self._ctx = ctx
+        if ctx is not None:
+            snapshot = task_state.metadata.get("context_snapshot")
+            ctx.begin_run(
+                goal,
+                goal_id=goal_id,
+                task_id=task_state.task_id,
+                snapshot=(
+                    snapshot if isinstance(snapshot, dict)
+                    else None
+                ),
+            )
+            if resume_from is not None:
+                ctx.record_checkpoint("Resumed from checkpoint")
         # Long-term context for this run: relevant verified
         # memories + active goals.  Memory problems must never
         # break the loop.
@@ -658,6 +696,7 @@ class AgentLoop:
                         s.tool_name for s in plan.steps
                     )[:240],
                 )
+                self._sync_plan_context(plan)
                 if plan.metadata.get("task_complete") or not plan.steps:
                     # Completion needs verified evidence, not
                     # just the model's word.
@@ -834,6 +873,9 @@ class AgentLoop:
                         f"{verification_result.reason}"[:240],
                         step_id=step.step_id,
                     )
+                self._note_step_context(
+                    step, execution_result, verification_result
+                )
                 result.records.append(
                     IterationRecord(
                         iteration=result.iterations,
@@ -854,6 +896,7 @@ class AgentLoop:
                     ),
                     source="agent",
                 )
+                self._sync_context_metadata(task_state)
                 snapshot = agent._save_checkpoint(
                     task_state, batch_plan, result
                 )
@@ -873,6 +916,7 @@ class AgentLoop:
                         f"({step.tool_name}); task paused",
                         step_id=step.step_id, sink=event_sink,
                     )
+                    self._sync_context_metadata(task_state)
                     agent._save_checkpoint(
                         task_state, batch_plan, result
                     )
@@ -966,6 +1010,15 @@ class AgentLoop:
                             sink=event_sink,
                         )
                 if recovered:
+                    # Replanning sees previous attempts, the
+                    # failure reason and kept partial progress
+                    # (never a blind repeat).
+                    brief = self._ctx_recovery_brief()
+                    if brief:
+                        context_note = (
+                            context_note + "\n" + brief
+                            if context_note else brief
+                        )
                     break  # next cycle executes the recovery batch
                 if not fatal:
                     pending = []
@@ -1051,6 +1104,26 @@ class AgentLoop:
             "browser_actions": browser_actions,
             "events": [e.type for e in self.events],
         }
+        # Long-context close-out: evidence-based run summary,
+        # resumable snapshot and persisted trajectory status.
+        self._sync_context_metadata(task_state)
+        if self._ctx is not None:
+            try:
+                task_state.metadata["context_summary"] = (
+                    self._ctx.end_run(outcome.value)
+                )
+            except Exception:
+                pass
+        if (
+            self._trajectory_store is not None
+            and self._ctx_task_id
+        ):
+            try:
+                self._trajectory_store.set_status(
+                    self._ctx_task_id, outcome.value
+                )
+            except Exception:
+                pass
         result.events = [e.to_dict() for e in self.events]
         result.trajectory = list(self.trajectory)
         return result
@@ -1111,8 +1184,16 @@ class AgentLoop:
 
     def _finish_early(self, result, task_state, agent, error, sink):
         """First-call planning failure (same contract as before)."""
+        self._sync_context_metadata(task_state)
         agent._save_checkpoint(task_state, None, result)
         task_state.metadata["trajectory"] = self.trajectory[-300:]
+        if self._ctx is not None:
+            try:
+                task_state.metadata["context_summary"] = (
+                    self._ctx.end_run("failed")
+                )
+            except Exception:
+                pass
         result.events = [e.to_dict() for e in self.events]
         result.trajectory = list(self.trajectory)
         self._emit(EVENT_FAILED, "Planning failed", sink=sink)
@@ -1325,6 +1406,23 @@ class AgentLoop:
             )
         if note:
             lines.append(note)
+        # Long-context reasoning: the run's ContextManager
+        # contributes a zoned, budgeted "relevant history"
+        # section (additive — the lines above are unchanged).
+        ctx = getattr(self, "_ctx", None)
+        if ctx is not None:
+            try:
+                query = goal
+                if observation:
+                    query += (
+                        f" {observation.get('title', '')} "
+                        f"{observation.get('url', '')}"
+                    )
+                extra = ctx.cycle_context(query=query)
+            except Exception:
+                extra = ""
+            if extra:
+                lines.append(extra)
         return "\n".join(lines)[:2600]
 
     def _emit(
@@ -1367,6 +1465,172 @@ class AgentLoop:
             }
         )
         state.metadata["trajectory"] = self.trajectory[-300:]
+        self._record_context(kind, summary, step_id)
+
+    # Trust zones for persisted trajectory entries.  Page-like
+    # observations and security findings are untrusted external
+    # content; the goal is the user's; everything else is the
+    # agent's own record.
+    _TRAJECTORY_ZONE_MAP = {
+        "goal": "user",
+        "security": "untrusted_external",
+        "observation": "tool_observation",
+    }
+
+    def _record_context(
+        self,
+        kind: str,
+        summary: str,
+        step_id: str | None = None,
+    ) -> None:
+        """Mirror a trace event into the trajectory store and
+        the run's ContextManager (best-effort; never breaks the
+        loop)."""
+        if (
+            self._trajectory_store is not None
+            and self._ctx_task_id
+        ):
+            try:
+                self._trajectory_store.record(
+                    self._ctx_task_id,
+                    {
+                        "kind": kind,
+                        "zone": self._TRAJECTORY_ZONE_MAP.get(
+                            kind, "agent_state"
+                        ),
+                        "summary": summary,
+                        "step_id": step_id,
+                    },
+                    goal=self._run_goal,
+                )
+            except Exception:
+                pass
+        ctx = self._ctx
+        if ctx is None:
+            return
+        try:
+            # Zone names as plain strings: ContextItem accepts
+            # them (no import of the context package here — the
+            # loop stays a factory-fed consumer, not an importer).
+            if kind == "observation":
+                ctx.record_observation(
+                    summary, zone="tool_observation"
+                )
+            elif kind == "security":
+                ctx.record_observation(
+                    summary, zone="untrusted_external"
+                )
+            elif kind == "decision":
+                ctx.record_decision(summary)
+            elif kind == "recovery":
+                ctx.record_recovery(summary)
+            elif kind in ("stall", "validation", "checkpoint"):
+                ctx.record_observation(
+                    summary, zone="agent_state"
+                )
+        except Exception:
+            pass
+
+    def _sync_plan_context(self, plan) -> None:
+        """Feed a fresh plan into the context: sub-goals to
+        track and the decision to record."""
+        ctx = self._ctx
+        if ctx is None or plan is None:
+            return
+        try:
+            steps = getattr(plan, "steps", None) or []
+            descriptions = [
+                f"{s.tool_name}: {s.description}"
+                for s in steps
+                if getattr(s, "tool_name", "")
+            ]
+            if descriptions:
+                ctx.sync_subgoals(descriptions)
+            ctx.record_decision(
+                f"Plan {getattr(plan, 'plan_id', '?')}: "
+                + ", ".join(
+                    s.tool_name for s in steps
+                )[:200],
+                tags=("plan",),
+            )
+        except Exception:
+            pass
+
+    def _note_step_context(
+        self, step, execution_result, verification_result
+    ) -> None:
+        """Record a step's action/result/verification outcome."""
+        ctx = self._ctx
+        if ctx is None:
+            return
+        try:
+            tool = str(getattr(step, "tool_name", ""))
+            step_id = str(getattr(step, "step_id", ""))
+            description = str(getattr(step, "description", ""))
+            ctx.record_action(tool, tags=(step_id,))
+            ok = bool(
+                getattr(execution_result, "success", False)
+            )
+            error = getattr(execution_result, "error", None)
+            if ok:
+                ctx.record_result(
+                    f"{tool} succeeded", tags=(step_id,)
+                )
+            else:
+                message = ""
+                if isinstance(error, dict):
+                    message = str(error.get("message", "failed"))
+                ctx.record_failure(
+                    tool, message or "failed", tags=(step_id,)
+                )
+            status = ""
+            reason = ""
+            if verification_result is not None:
+                status = str(
+                    getattr(
+                        verification_result.status, "value",
+                        verification_result.status,
+                    )
+                )
+                reason = str(
+                    getattr(
+                        verification_result, "reason", ""
+                    )
+                )
+                ctx.record_verification(step_id, status, reason)
+                if status == "verified":
+                    ctx.note_completed_action(tool)
+                    ctx.complete_subgoal_for_step(
+                        f"{tool}: {description}", reason
+                    )
+            if self._is_approval_error(error):
+                ctx.record_approval(
+                    tool, False, "approval_required"
+                )
+        except Exception:
+            pass
+
+    def _ctx_recovery_brief(self) -> str:
+        ctx = self._ctx
+        if ctx is None:
+            return ""
+        try:
+            return ctx.recovery_brief()
+        except Exception:
+            return ""
+
+    def _sync_context_metadata(self, task_state) -> None:
+        """Refresh the context snapshot in task metadata so
+        checkpoints carry resumable working context."""
+        ctx = self._ctx
+        if ctx is None:
+            return
+        try:
+            task_state.metadata["context_snapshot"] = (
+                ctx.snapshot().to_dict()
+            )
+        except Exception:
+            pass
 
 
 def _execution_report(
