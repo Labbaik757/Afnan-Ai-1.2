@@ -41,6 +41,8 @@ class BrowserErrorCode(str, Enum):
     INVALID_TAB = "invalid_tab"
     INVALID_URL = "invalid_url"
     NAVIGATION_FAILED = "navigation_failed"
+    APPROVAL_REQUIRED = "approval_required"
+    APPROVAL_DENIED = "approval_denied"
     ELEMENT_NOT_FOUND = "element_not_found"
     INVALID_LOCATOR = "invalid_locator"
     INVALID_ELEMENT = "invalid_element"

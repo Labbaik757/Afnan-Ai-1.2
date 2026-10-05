@@ -118,6 +118,11 @@ class BrowserBackend(ABC):
     ) -> None:
         self._unsupported("clearing")
 
+    def set_input_files(
+        self, handle: Any, element: Any, path: str, timeout_ms: int
+    ) -> None:
+        self._unsupported("file upload")
+
     def select_option(
         self, handle: Any, element: Any, value: str, timeout_ms: int
     ) -> None:
@@ -312,29 +317,35 @@ class PlaywrightBackend(BrowserBackend):
     _LOCATOR_ORDER = ("selector", "test_id", "label", "placeholder", "role", "text")
 
     def _locators(self, page, locator: dict[str, Any]):
+        # When a frame is named, look inside it (iframes); CSS
+        # selectors also pierce open shadow DOM by default in
+        # Playwright, so shadow content needs no special casing.
+        root = page
+        if locator.get("frame"):
+            root = page.frame_locator(str(locator["frame"]))
         candidates = []
         for key in self._LOCATOR_ORDER:
             if locator.get(key) is None:
                 continue
             if key == "selector":
-                candidates.append(page.locator(str(locator["selector"])))
+                candidates.append(root.locator(str(locator["selector"])))
             elif key == "test_id":
-                candidates.append(page.get_by_test_id(str(locator["test_id"])))
+                candidates.append(root.get_by_test_id(str(locator["test_id"])))
             elif key == "label":
-                candidates.append(page.get_by_label(str(locator["label"])))
+                candidates.append(root.get_by_label(str(locator["label"])))
             elif key == "placeholder":
                 candidates.append(
-                    page.get_by_placeholder(str(locator["placeholder"]))
+                    root.get_by_placeholder(str(locator["placeholder"]))
                 )
             elif key == "role":
                 kwargs = {}
                 if locator.get("name"):
                     kwargs["name"] = str(locator["name"])
                 candidates.append(
-                    page.get_by_role(str(locator["role"]), **kwargs)
+                    root.get_by_role(str(locator["role"]), **kwargs)
                 )
             elif key == "text":
-                candidates.append(page.get_by_text(str(locator["text"])))
+                candidates.append(root.get_by_text(str(locator["text"])))
         return candidates
 
     def query_elements(
@@ -404,6 +415,14 @@ class PlaywrightBackend(BrowserBackend):
             element.fill("", timeout=timeout_ms)
         except Exception as e:
             raise self._driver_error(e, "clear element") from e
+
+    def set_input_files(
+        self, handle: Any, element: Any, path: str, timeout_ms: int
+    ) -> None:
+        try:
+            element.set_input_files(path, timeout=timeout_ms)
+        except Exception as e:
+            raise self._driver_error(e, "upload file") from e
 
     def select_option(
         self, handle: Any, element: Any, value: str, timeout_ms: int

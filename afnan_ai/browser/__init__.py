@@ -27,10 +27,23 @@ from afnan_ai.browser.base import (
 )
 from afnan_ai.browser.controller import BrowserController
 from afnan_ai.browser.reliability import BrowserReliability
+from afnan_ai.browser.security import (
+    ActionRisk,
+    ApprovalDecision,
+    ApprovalGate,
+    ApprovalRequest,
+    SecurityPolicy,
+    Sensitivity,
+    classify_action,
+)
 from afnan_ai.browser.tools import create_browser_tools, register_browser_tools
 
 __all__ = [
     "SUPPORTED_BROWSERS",
+    "ActionRisk",
+    "ApprovalDecision",
+    "ApprovalGate",
+    "ApprovalRequest",
     "BrowserBackend",
     "BrowserController",
     "BrowserReliability",
@@ -40,7 +53,10 @@ __all__ = [
     "ElementInfo",
     "PageState",
     "PlaywrightBackend",
+    "SecurityPolicy",
+    "Sensitivity",
     "TabInfo",
+    "classify_action",
     "create_browser_tools",
     "register_browser_tools",
 ]
