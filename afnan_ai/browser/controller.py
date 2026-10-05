@@ -43,6 +43,12 @@ from afnan_ai.browser.base import (
 )
 from afnan_ai.browser.challenge import detect_challenge
 from afnan_ai.browser.downloads import DownloadManager
+from afnan_ai.browser.network import summarize_network
+from afnan_ai.browser.ratelimit import (
+    ActionPacer,
+    RateLimitDetector,
+    RateLimitPolicy,
+)
 from afnan_ai.browser.security import (
     ApprovalGate,
     classify_action,
@@ -85,6 +91,7 @@ class BrowserController:
         challenge_guard: bool = True,
         challenge_handler=None,
         challenge_wait_ms: int = 120_000,
+        rate_policy: RateLimitPolicy | None = None,
     ):
         self._backend = backend or PlaywrightBackend()
         # Sensitive-action approval gate (security layer): a
@@ -122,6 +129,20 @@ class BrowserController:
         # action resumes automatically once the page clears.
         self.challenge_handler = challenge_handler
         self._challenge_wait_ms = challenge_wait_ms
+        # rate-limit / anti-bot awareness: page-signal detection
+        # plus optional pacing of the controller's own actions
+        self._rate_policy = rate_policy or RateLimitPolicy()
+        self._pacer = ActionPacer(self._rate_policy)
+        # browser profiles: isolated contexts, one active at a
+        # time; each profile's tabs are stashed on switch so
+        # cookies/storage/tabs never leak across profiles
+        self._profiles: dict[str, dict[str, Any]] = {
+            "default": {"name": "default", "preferences": {}}
+        }
+        self._active_profile = "default"
+        self._profile_tabs: dict[
+            str, tuple[dict[str, _Tab], str | None]
+        ] = {}
         # download + session managers (browser-layer services)
         self.download_manager = DownloadManager(self._backend)
         self.session_manager = SessionManager(self)
@@ -163,6 +184,7 @@ class BrowserController:
                 "url": redact_text(tab.url or ""),
                 "title": tab.title or "",
                 "purpose": self._tab_purposes.get(tab.tab_id, ""),
+                "profile": self._active_profile,
             }
         )
         # bounded: keep the most recent 500 events
@@ -458,6 +480,7 @@ class BrowserController:
         tab, record, info = self._prepare_interaction(tab_id, target)
         self._require_usable(info, "click")
         self._challenge_check(tab)
+        self._ratelimit_check(tab)
         sensitivity = self._gate_check("browser_click", tab, info)
         self._do(
             lambda: self._backend.click_element(
@@ -485,6 +508,7 @@ class BrowserController:
         tab, record, info = self._prepare_interaction(tab_id, target)
         self._require_usable(info, "type into")
         self._challenge_check(tab)
+        self._ratelimit_check(tab)
         if not info.editable:
             raise BrowserException(
                 f"Element {info.ref} (<{info.tag}>) is not an "
@@ -538,6 +562,7 @@ class BrowserController:
         tab, record, info = self._prepare_interaction(tab_id, target)
         self._require_usable(info, "clear")
         self._challenge_check(tab)
+        self._ratelimit_check(tab)
         if not info.editable:
             raise BrowserException(
                 f"Element {info.ref} (<{info.tag}>) is not an "
@@ -567,6 +592,7 @@ class BrowserController:
         tab, record, info = self._prepare_interaction(tab_id, target)
         self._require_usable(info, "select an option in")
         self._challenge_check(tab)
+        self._ratelimit_check(tab)
         if info.tag != "select":
             raise BrowserException(
                 f"Element {info.ref} is a <{info.tag}>, not a "
@@ -606,6 +632,7 @@ class BrowserController:
             )
         tab = self._resolve_tab(tab_id)
         self._challenge_check(tab)
+        self._ratelimit_check(tab)
         element_handle = None
         info = None
         if target:
@@ -647,6 +674,7 @@ class BrowserController:
         tab, record, info = self._prepare_interaction(tab_id, target)
         self._require_usable(info, "upload to")
         self._challenge_check(tab)
+        self._ratelimit_check(tab)
         if info.tag != "input" or (
             str(info.attributes.get("type", "")).lower() != "file"
         ):
@@ -1429,6 +1457,243 @@ class BrowserController:
         self.challenge_handler = handler
         if wait_ms is not None:
             self._challenge_wait_ms = int(wait_ms)
+
+    # -- network / rate-limit awareness --------------------------------
+
+    def network_status(
+        self, tab_id: str | None = None
+    ) -> dict[str, Any]:
+        """Diagnostic summary of the page's network activity.
+
+        Failed requests, timeouts, blocked resources and HTTP
+        errors the page hit — observation only; nothing here can
+        fire a network request of its own.
+        """
+        tab = self._resolve_tab(tab_id)
+        try:
+            events = self._backend.network_events(tab.handle)
+        except Exception:
+            events = []
+        summary = summarize_network(events or [], page_url=tab.url)
+        summary["tab_id"] = tab.tab_id
+        return summary
+
+    def rate_limit_status(
+        self, tab_id: str | None = None
+    ) -> dict[str, Any]:
+        """Is this page/host rate-limiting or blocking us?
+
+        Combines page-signal detection (title/text/URL), network
+        diagnostics (HTTP 429) and the controller's own action
+        pacing.  Detection only — the answer never triggers a
+        retry.
+        """
+        tab = self._resolve_tab(tab_id)
+        detection: dict[str, Any] = {"detected": False}
+        try:
+            detection = RateLimitDetector().detect(
+                self.observe(tab.tab_id),
+                self.network_status(tab.tab_id),
+            )
+        except Exception:
+            detection = {"detected": False}
+        from urllib.parse import urlparse
+
+        host = urlparse(tab.url).netloc
+        pacing = self._pacer.status(host)
+        retry_after = detection.get("retry_after_s")
+        if retry_after is None and not pacing.get("allowed", True):
+            retry_after = int(pacing.get("retry_after_s") or 0)
+        return {
+            "limited": bool(
+                detection.get("detected")
+                or not pacing.get("allowed", True)
+            ),
+            "detection": detection,
+            "pacing": pacing,
+            "retry_after_s": retry_after,
+            "tab_id": tab.tab_id,
+        }
+
+    def rate_limit_backoff(
+        self, tab_id: str | None = None, *, max_wait_ms: int = 5000
+    ) -> dict[str, Any]:
+        """One controlled backoff: wait once, then re-check.
+
+        Never loops and never retries the failed action itself —
+        it waits at most ``max_wait_ms`` and reports the fresh
+        status so the caller can decide (continue, pause or ask
+        a human).
+        """
+        tab = self._resolve_tab(tab_id)
+        status = self.rate_limit_status(tab.tab_id)
+        if not status["limited"]:
+            return {**status, "waited_ms": 0}
+        wait_ms = min(
+            int((status.get("retry_after_s") or 1) * 1000),
+            max(0, int(max_wait_ms)),
+        )
+        if wait_ms > 0:
+            time.sleep(wait_ms / 1000.0)
+        after = self.rate_limit_status(tab.tab_id)
+        return {**after, "waited_ms": wait_ms}
+
+    def _ratelimit_check(self, tab: _Tab) -> None:
+        """Stop with ``rate_limited`` when the site is throttling
+        or blocking, or when our own action pacing limit for this
+        host is exhausted.  Never retries anything itself."""
+        from urllib.parse import urlparse
+
+        host = urlparse(tab.url).netloc
+        if self._rate_policy.max_actions_per_minute is not None:
+            allowed, retry_after = self._pacer.check(host)
+            if not allowed:
+                raise BrowserException(
+                    "Action rate limit reached for "
+                    f"{host or 'this page'}: too many actions in "
+                    "a short window. Pause with a controlled "
+                    "backoff instead of retrying (rate_limited).",
+                    code=BrowserErrorCode.RATE_LIMITED,
+                    details={
+                        "tab_id": tab.tab_id,
+                        "host": host,
+                        "retry_after_s": round(retry_after, 2),
+                    },
+                )
+            self._pacer.note(host)
+        try:
+            detection = RateLimitDetector().detect(
+                self.observe(tab.tab_id),
+                self.network_status(tab.tab_id),
+            )
+        except Exception:
+            return
+        if detection.get("detected"):
+            raise BrowserException(
+                "The site is rate-limiting or blocking automated "
+                "access on this page. Do not retry aggressively: "
+                "pause with a controlled backoff or hand the task "
+                "to a human (rate_limited).",
+                code=BrowserErrorCode.RATE_LIMITED,
+                details={
+                    "tab_id": tab.tab_id,
+                    "detection": detection,
+                },
+            )
+
+    # -- profiles (isolated contexts) -----------------------------------
+
+    @property
+    def current_profile(self) -> str:
+        return self._active_profile
+
+    def profile_info(self, name: str) -> dict[str, Any]:
+        if name not in self._profiles:
+            raise BrowserException(
+                f"Unknown browser profile {name!r}.",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"profile": name},
+            )
+        return self._profile_info(name)
+
+    @staticmethod
+    def _sanitize_preferences(
+        preferences: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Profile preferences, minus anything credential-shaped.
+
+        Profiles carry display/context preferences only; secrets
+        never belong in a profile record.
+        """
+        clean: dict[str, Any] = {}
+        for key, value in (preferences or {}).items():
+            lowered = str(key).lower()
+            if any(
+                marker in lowered
+                for marker in (
+                    "password", "passwd", "token", "secret",
+                    "cookie", "auth", "credential", "api_key",
+                )
+            ):
+                continue
+            clean[str(key)] = value
+        return clean
+
+    def create_profile(
+        self,
+        name: str,
+        preferences: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create an isolated browser profile (own context:
+        separate cookies, storage and tabs)."""
+        name = str(name or "").strip()
+        if not name:
+            raise BrowserException(
+                "A profile name is required.",
+                code=BrowserErrorCode.OPERATION_FAILED,
+            )
+        if name in self._profiles:
+            raise BrowserException(
+                f"Browser profile {name!r} already exists.",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"profile": name},
+            )
+        clean = self._sanitize_preferences(preferences)
+        # driver context first: if the backend cannot isolate
+        # profiles, nothing is registered here either
+        self._backend.create_profile_context(name, clean)
+        self._profiles[name] = {
+            "name": name,
+            "preferences": clean,
+        }
+        logger.info("browser profile created: %s", name)
+        return self._profile_info(name)
+
+    def select_profile(self, name: str) -> dict[str, Any]:
+        """Switch the active profile, stashing the current
+        profile's tabs so nothing leaks across profiles."""
+        name = str(name or "").strip()
+        if name not in self._profiles:
+            raise BrowserException(
+                f"Unknown browser profile {name!r}.",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"profile": name},
+            )
+        if name == self._active_profile:
+            return self._profile_info(name)
+        # backend first: a failed switch leaves state untouched
+        self._backend.set_active_profile(name)
+        self._profile_tabs[self._active_profile] = (
+            self._tabs,
+            self._active_tab_id,
+        )
+        stashed = self._profile_tabs.pop(name, None)
+        if stashed is not None:
+            self._tabs, self._active_tab_id = stashed
+        else:
+            self._tabs, self._active_tab_id = {}, None
+        self._active_profile = name
+        logger.info("browser profile selected: %s", name)
+        return self._profile_info(name)
+
+    def list_profiles(self) -> list[dict[str, Any]]:
+        return [
+            self._profile_info(name) for name in self._profiles
+        ]
+
+    def _profile_info(self, name: str) -> dict[str, Any]:
+        if name == self._active_profile:
+            tab_count = len(self._tabs)
+        else:
+            stashed = self._profile_tabs.get(name)
+            tab_count = len(stashed[0]) if stashed else 0
+        record = self._profiles[name]
+        return {
+            "name": name,
+            "active": name == self._active_profile,
+            "tabs": tab_count,
+            "preferences": dict(record.get("preferences") or {}),
+        }
 
     def _gate_check(
         self,
