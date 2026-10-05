@@ -288,6 +288,8 @@ def main() -> int:
             "browser_profiles",
             "browser_session",
             "browser_capabilities",
+            "browser_perceive", "browser_locate",
+            "browser_computer_act",
         }
         if set(browser_tool_names) != expected_browser_tools:
             failures.append(f"browser tools mismatch: {browser_tool_names}")
