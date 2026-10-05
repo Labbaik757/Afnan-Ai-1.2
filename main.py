@@ -164,6 +164,13 @@ def get_browser_reliability():
     return _agent.browser_reliability
 
 
+def get_screen_observer():
+    """Return the ScreenObserver (structured visual observations
+    of the desktop/browser screen), or None when screen tools
+    are disabled."""
+    return _agent.screen_observer
+
+
 def get_approval_gate():
     """Return the browser ApprovalGate (sensitive-action policy
     plus recorded approval decisions)."""

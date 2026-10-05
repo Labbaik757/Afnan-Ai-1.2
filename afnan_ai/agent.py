@@ -33,6 +33,11 @@ from afnan_ai.llm.base import (
     LLMUnavailableError,
 )
 from afnan_ai.orchestrator import Agent as OrchestratorAgent
+from afnan_ai.screen import (
+    FunctionCaptureSource,
+    ScreenObserver,
+    register_screen_tools,
+)
 from afnan_ai.orchestrator import OrchestrationResult, OrchestrationStatus
 from afnan_ai.platform import get_adapter
 from afnan_ai.platform.base import PlatformAdapter
@@ -84,6 +89,8 @@ class AfnanAgent:
         enable_browser_tools: bool = True,
         browser_approver=None,
         security_policy=None,
+        screen_observer: ScreenObserver | None = None,
+        enable_screen_tools: bool = True,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -112,6 +119,22 @@ class AfnanAgent:
             )
         if enable_browser_tools:
             register_browser_tools(self.tools, self.browser)
+        # Screen observation: structured visual information
+        # (dimensions, UI elements, regions, confidence scores)
+        # from the desktop (the agent's existing capture) or from
+        # browser pages (DOM first, pixel detection as fallback).
+        # Low-confidence elements are gated to the Verifier/human
+        # approval; the observer never clicks anything itself.
+        self.screen_observer: ScreenObserver | None = screen_observer
+        if self.screen_observer is None and enable_screen_tools:
+            self.screen_observer = ScreenObserver(
+                FunctionCaptureSource(self._capture_screenshot),
+                browser_controller=(
+                    self.browser if enable_browser_tools else None
+                ),
+            )
+        if enable_screen_tools and self.screen_observer is not None:
+            register_screen_tools(self.tools, self.screen_observer)
         # The agent talks to a model only through the LLMProvider
         # interface.  By default that is the local Ollama provider
         # (llama3), exactly as before; pass any other provider
@@ -137,11 +160,7 @@ class AfnanAgent:
         # results — it analyzes results/state, never re-executes.
         # For browser steps it also sees the actual page state.
         self.verifier: Verifier = verifier or Verifier(
-            observation_provider=(
-                self.browser_reliability.observe_state
-                if self.browser_reliability
-                else None
-            ),
+            observation_provider=self._verifier_observation_provider,
             failure_advisor=(
                 self.browser_reliability.advise
                 if self.browser_reliability
@@ -235,6 +254,19 @@ class AfnanAgent:
         return result
 
     def get_tool(self, name: str):
+        return self.tools.get_or_none(name)
+
+    def _verifier_observation_provider(self, step=None):
+        """Route the Verifier's observation hook by step type:
+        browser steps get fresh page state, screen steps get a
+        fresh screen observation, everything else gets None (the
+        step's own output is judged)."""
+        tool_name = str(getattr(step, "tool_name", "")) if step else ""
+        if tool_name.startswith("browser_") and self.browser_reliability:
+            return self.browser_reliability.observe_state(step)
+        if tool_name.startswith("screen_") and self.screen_observer:
+            return self.screen_observer.verifier_observation(step)
+        return None
         return self.tools.get_or_none(name)
 
     def set_browser_approver(self, approver) -> None:

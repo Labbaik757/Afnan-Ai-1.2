@@ -766,6 +766,38 @@ stay out of every record:
   no secret exposure; failures never crash the agent;
   Windows/Linux/macOS architecture intact).
 
+## ScreenObserver: structured visual observation
+
+For everything the DOM cannot see — canvas apps, remote
+desktops, custom-drawn UI — the `ScreenObserver`
+(`afnan_ai/screen/`) describes the actual screen:
+
+- **Structured, never raw pixels** — observations carry screen
+  dimensions, visible UI elements, regions (bounding boxes with
+  centers) and **confidence scores**. The Planner and AgentState
+  only ever see this structure; a screenshot file is saved only
+  when explicitly requested.
+- **DOM first, pixels as fallback** — browser observations fuse
+  the BrowserController's DOM elements (confidence 1.0) with
+  pixel-detected ones; when the DOM is missing, the visual
+  elements (marked `source="visual"`) carry the page. Desktop
+  captures reuse the agent's existing screenshot capture, and
+  PNG decoding/detection is pure stdlib, so the layer has no
+  platform or driver code of its own.
+- **Never act on a guess** — `screen_assess_action` tiers every
+  element: high confidence may proceed, medium must be
+  confirmed by the Verifier (fresh screen observations feed the
+  same observation-provider hook the browser layer uses), and
+  low confidence requires human approval. The observer itself
+  clicks nothing.
+- Tools: `screen_observe`, `screen_find_elements`,
+  `screen_assess_action` (disable with
+  `enable_screen_tools=False`; access via
+  `main.get_screen_observer()`). Screen-change detection makes
+  stale refs fail with a structured `element_not_found` instead
+  of acting on an old screen. Tests:
+  `tests/test_screen_observer.py`.
+
 # 🏁 Phase 1 Status — Clean, Tested, Cross-Platform
 
 Phase 1 (the core agent architecture) is complete and verified
