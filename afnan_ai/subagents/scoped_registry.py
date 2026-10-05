@@ -211,6 +211,14 @@ class ScopedToolRegistry(ToolRegistry):
                     "message": str(e),
                 },
             )
+        # Subagent calls are attributed to the subagent
+        # actor so the central policy sees who is acting.
+        # The parent registry's SecurityCenter (if any)
+        # authorizes with least-privilege subagent caps.
+        kwargs.setdefault(
+            "security_actor",
+            f"subagent:{self._owner_id or 'unknown'}",
+        )
         return self._parent.execute(name, arguments, **kwargs)
 
     def execute_or_raise(

@@ -158,7 +158,50 @@ class SubAgentManager:
         with self._lock:
             self._records[spec.subagent_id] = record
         self._audit("created", record)
+        self._grant_center_capabilities(spec)
         return record
+
+    def _grant_center_capabilities(self, spec) -> None:
+        """Least-privilege grant in the central
+        PermissionManager (when the parent registry has a
+        SecurityCenter): the subagent actor gets exactly
+        the capabilities its allowed tools imply — never
+        more than the agent holds."""
+        center = getattr(
+            self.tools, "security_center", None
+        )
+        if center is None:
+            return
+        try:
+            from afnan_ai.security.policy import (
+                SecurityPolicyEngine,
+            )
+
+            caps: set[str] = set()
+            for pattern in spec.allowed_tools or []:
+                pattern = str(pattern or "").strip()
+                if not pattern:
+                    continue
+                if pattern.endswith("*"):
+                    domain = pattern[:-1].rstrip("_")
+                    if domain:
+                        caps.add(f"{domain}.*")
+                else:
+                    caps.add(
+                        SecurityPolicyEngine._capability_for(
+                            pattern
+                        )
+                    )
+            if caps:
+                actor = center.subagent_actor(
+                    spec.subagent_id, sorted(caps)
+                )
+                # subagent_actor() already intersects with
+                # the agent's own capabilities.
+                _ = actor
+        except Exception:
+            pass  # grants are best-effort; the scoped
+            # registry still enforces its own allow-list
 
     def get(self, subagent_id: str) -> SubAgentRecord:
         with self._lock:

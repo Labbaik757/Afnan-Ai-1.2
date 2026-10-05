@@ -37,6 +37,11 @@ from afnan_ai.tools.base import (
 class ToolRegistry:
     def __init__(self, tools: Iterable[Tool] | None = None):
         self._tools: dict[str, Tool] = {}
+        # Central security hook (None = legacy behavior).
+        # When a SecurityCenter is attached, EVERY tool call
+        # is authorized through it first: validate →
+        # classify → permission check → approval → audit.
+        self.security_center = None
         if tools:
             self.register_many(tools)
 
@@ -61,6 +66,17 @@ class ToolRegistry:
                 tool=name,
             )
         self._tools[name] = tool
+        # Registration is a developer trust action: the
+        # agent actor gains the tool's domain capability so
+        # centrally-authorized calls keep working as tools
+        # are added dynamically.
+        center = self.security_center
+        if center is not None:
+            domain, _, _ = name.partition("_")
+            if domain:
+                center.grant_agent_capabilities(
+                    f"{domain}.*"
+                )
         return tool
 
     def register_many(self, tools: Iterable[Tool]) -> None:
@@ -116,7 +132,11 @@ class ToolRegistry:
 
         Expected failures (unknown tool, missing/invalid arguments,
         the tool itself failing) are returned, not raised.
+
+        The reserved ``security_actor`` kwarg selects the actor
+        for central authorization; it never reaches the tool.
         """
+        actor = kwargs.pop("security_actor", None)
         merged: dict[str, Any] = dict(arguments or {})
         merged.update(kwargs)
 
@@ -134,6 +154,54 @@ class ToolRegistry:
                     details={"available": self.names()},
                 ),
             )
+
+        center = self.security_center
+        if center is not None:
+            decision = center.authorize(
+                tool_name=name,
+                arguments=merged,
+                actor=actor or center.agent_actor.label,
+            )
+            if decision.action == "deny":
+                return ToolResult.fail(
+                    name,
+                    ToolError(
+                        code=ToolErrorCode.PERMISSION_DENIED,
+                        message=(
+                            f"Security policy denied {name!r}: "
+                            f"{decision.reason}"
+                        ),
+                        tool=name,
+                        details={
+                            "security": True,
+                            "risk": decision.risk_level.value,
+                            "reason": decision.reason,
+                        },
+                    ),
+                )
+            if decision.action == "approval_required":
+                # The loop already pauses on approval codes —
+                # resumable, like every other sensitive tool.
+                return ToolResult.fail(
+                    name,
+                    ToolError(
+                        code=ToolErrorCode.APPROVAL_REQUIRED,
+                        message=(
+                            f"Security policy requires human "
+                            f"approval for {name!r} "
+                            f"(risk={decision.risk_level.value})"
+                        ),
+                        tool=name,
+                        details={
+                            "security": True,
+                            "risk": decision.risk_level.value,
+                            "resumable": True,
+                        },
+                    ),
+                )
+
+        tool = self._tools.get(name)
+        # (already resolved above; kept for clarity)
 
         try:
             output = tool.execute(merged)

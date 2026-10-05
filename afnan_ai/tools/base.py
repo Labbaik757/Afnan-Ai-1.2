@@ -51,6 +51,9 @@ class ToolErrorCode(str, Enum):
     EXECUTION_FAILED = "execution_failed"
     TOOL_ALREADY_REGISTERED = "tool_already_registered"
     INVALID_TOOL = "invalid_tool"
+    PERMISSION_DENIED = "permission_denied"
+    APPROVAL_REQUIRED = "approval_required"
+    APPROVAL_DENIED = "approval_denied"
 
 
 @dataclass
