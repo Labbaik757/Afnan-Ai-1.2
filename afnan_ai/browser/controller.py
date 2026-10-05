@@ -50,9 +50,12 @@ from afnan_ai.browser.ratelimit import (
     RateLimitPolicy,
 )
 from afnan_ai.browser.security import (
+    ActionRisk,
     ApprovalGate,
+    Sensitivity,
     classify_action,
 )
+from afnan_ai.browser.semantics import rank as rank_semantic
 from afnan_ai.browser.session import SessionManager
 from afnan_ai.log_config import get_logger
 from afnan_ai.redaction import MASK, redact_text
@@ -115,6 +118,10 @@ class BrowserController:
         self._generations: dict[str, int] = {}
         # last observation fingerprint per tab (page-change detection)
         self._observations: dict[str, str] = {}
+        # Confidence of controller-issued element refs that came
+        # from a natural-language (semantic) search.  Actions on
+        # sub-0.8 targets are gated through human approval.
+        self._semantic_confidence: dict[str, float] = {}
         # task-level purpose per tab (multi-tab task management)
         self._tab_purposes: dict[str, str] = {}
         # navigation history (session manager): bounded, redacted
@@ -704,8 +711,25 @@ class BrowserController:
             "upload file to",
             record,
         )
+        # Completion verification: the input must actually show
+        # the uploaded file.  A driver that reports a different
+        # file means the upload did not land — fail structurally
+        # instead of claiming success.
+        shown = ""
+        try:
+            shown = self._read_info(tab, record).value or ""
+        except Exception:
+            shown = ""
+        if shown and path.name not in shown:
+            raise BrowserException(
+                f"Upload of {path.name!r} could not be verified: "
+                f"the file input shows {shown!r}",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"ref": info.ref, "file": path.name},
+            )
         result = self._interaction_result(tab, "upload", info)
         result["uploaded_file"] = path.name
+        result["upload_verified"] = bool(shown and path.name in shown)
         if sensitivity:
             result["sensitivity"] = sensitivity
         return result
@@ -787,6 +811,13 @@ class BrowserController:
             ) from e
         elements = [self._register_element(tab, h) for h in handles]
 
+        # Dialogs the page raised (recorded + dismissed by the
+        # driver): surfaced as observation, never acted on.
+        try:
+            dialogs = self._backend.dialogs(tab.handle)
+        except Exception:
+            dialogs = []
+
         text = text or ""
         fingerprint = hashlib.sha256(
             json.dumps(
@@ -825,6 +856,7 @@ class BrowserController:
             "text_truncated": len(text) > text_limit,
             "elements": [el.to_dict() for el in elements],
             "element_count": len(elements),
+            "dialogs": dialogs,
             "page_changed": changed,
             "observed_at": datetime.now(timezone.utc).isoformat(),
             "observation": {
@@ -887,6 +919,63 @@ class BrowserController:
                 "url": self.current_page(tab.tab_id)["url"],
                 "source": source,
                 "count": len(nodes),
+            },
+        }
+
+    def find_semantic(
+        self,
+        description: str,
+        *,
+        tab_id: str | None = None,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        """Rank page elements against a natural-language
+        description (e.g. "Login button", "Email field").
+
+        Accessibility first: candidates come from the page's
+        accessibility tree / DOM-derived nodes.  Low-confidence
+        matches carry no element reference at all; mid-confidence
+        matches are remembered, and any later action on them is
+        routed through the human approval gate (see
+        ``_gate_check``) instead of executing blindly.
+        """
+        tree = self.accessibility_tree(tab_id=tab_id)
+        ranked = rank_semantic(description, tree["nodes"])
+        matches: list[dict[str, Any]] = []
+        for match in ranked[: max(1, int(limit))]:
+            entry = dict(match)
+            if entry["tier"] == "low":
+                entry["element_ref"] = None
+            elif entry.get("element_ref"):
+                self._semantic_confidence[entry["element_ref"]] = float(
+                    entry["confidence"]
+                )
+            matches.append(entry)
+        best = matches[0] if matches else None
+        uncertain = bool(best and best["tier"] != "actionable")
+        return {
+            "description": description,
+            "tab_id": tree["tab_id"],
+            "matches": matches,
+            "best_confidence": best["confidence"] if best else 0.0,
+            "uncertain": uncertain,
+            "note": (
+                "Low-confidence matches have no element_ref and "
+                "must not be acted on automatically; verify or "
+                "ask first."
+                if uncertain else
+                "Top match is confident enough to act on via its "
+                "element_ref or locator."
+            ),
+            "observation": {
+                "type": "semantic_search",
+                "summary": (
+                    f"Semantic search for {description!r}: "
+                    f"{len(matches)} match(es), best confidence "
+                    f"{best['confidence'] if best else 0.0}"
+                ),
+                "description": description,
+                "best_confidence": best["confidence"] if best else 0.0,
             },
         }
 
@@ -1715,6 +1804,24 @@ class BrowserController:
             element=info.to_dict() if info is not None else None,
             arguments=arguments,
         )
+        if not risk.sensitive and info is not None:
+            confidence = self._semantic_confidence.get(info.ref)
+            if confidence is not None and confidence < 0.8:
+                # The target came from a natural-language search
+                # and the match is not confident: a human must
+                # confirm before anything irreversible happens
+                # to the wrong element.
+                risk = ActionRisk(
+                    sensitivity=Sensitivity.SENSITIVE,
+                    category="uncertain_target",
+                    reason=(
+                        "Element was located from a "
+                        "natural-language description with "
+                        f"confidence {confidence:.2f} (< 0.80); "
+                        "confirm it is the right target before "
+                        "acting"
+                    ),
+                )
         if not risk.sensitive:
             return None
         page = self.current_page(tab.tab_id)
