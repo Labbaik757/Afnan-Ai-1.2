@@ -834,6 +834,38 @@ second driver, no browser logic in the core agent):
   `tests/test_browser_accessibility.py` and
   `tests/test_browser_research.py` (30 browser tools total).
 
+## SPA awareness, pagination, CAPTCHA, downloads and sessions
+
+Five more advanced capabilities, same BrowserController and
+Tool architecture (35 browser tools total):
+
+- **JavaScript / SPA awareness** (`browser_wait_for_stable`) —
+  a page probe (URL, title, `readyState`, text/element counts,
+  content hash, detected React/Next.js/Vue/Angular) is polled
+  until it stops changing, so client-side routing and async
+  rendering are awaited by condition, never by blind sleeps.
+- **Infinite scroll / pagination** (`browser_collect_items`) —
+  scrolls feeds or clicks Next controls, deduplicates items,
+  and always terminates: `max_items`, `max_pages`, an
+  exhausted list, or a missing/stalled Next control.
+- **CAPTCHA detection** (`browser_check_challenge`) — human
+  checks are detected from URL/title/text/widget signals and
+  reported as `human_required`; clicks and typing on a
+  challenge page stop with the same structured error. A
+  CAPTCHA is **never solved or bypassed** — the task pauses
+  for the user, and recovery advice says exactly that.
+- **Download manager** (`browser_downloads`) — downloads are
+  tracked centrally (state, filename, type, destination,
+  size); finished files are verified for existence and basic
+  integrity (magic bytes). Executable payloads are flagged
+  unsafe and need human approval; nothing is ever opened or
+  executed automatically.
+- **History / session manager** (`browser_session`) — every
+  navigation is recorded (tab, purpose, timestamp, redacted
+  URL); sessions can be inspected, saved to JSON and restored
+  later so a new task recovers the previous task's browsing
+  context. Tests: `tests/test_browser_advanced.py`.
+
 # 🏁 Phase 1 Status — Clean, Tested, Cross-Platform
 
 Phase 1 (the core agent architecture) is complete and verified
