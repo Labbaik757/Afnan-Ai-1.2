@@ -1951,23 +1951,25 @@ end to end:
 **On-device wake word** (`afnan_ai/wakeword.py`):
 
 - `WakeWordDetector` interface (LLMProvider jaisa
-  pattern), `OpenWakeWordDetector` (Apache-2.0, offline),
+  pattern), `CustomONNXDetector` (trained classifier),
+  `OpenWakeWordDetector` (Apache-2.0, offline),
   `FakeWakeWordDetector` (tests), `create_detector()`
   factory — model ya library na ho toh automatic
   fallback purane cloud loop pe.
 - `agent.start()` mic se 80 ms PCM frames stream karke
   local score check karta hai; threshold
   `AFNAN_WAKEWORD_THRESHOLD` (default 0.5).
-- **Apna "Afnan" model train karna** (one-time):
-  1. `pip install openwakeword`
-  2. openWakeWord repo ka `notebooks/automatic_model_training.ipynb`
-     Colab mein kholo (free T4, ~30–60 min)
-  3. Target word `afnan` rakho aur **apni 20–30
-     recordings** add karo — Urdu accent ke liye ye
-     lazmi hai, warna English TTS wali awaz tumhari
-     awaz se match nahi karegi
-  4. `afnan.onnx` download karke `AFNAN_WAKEWORD_MODEL`
-     env var mein path do
+- **Model already trained hai** —
+  `afnan_ai/wakeword_models/afnan.json` (35 KB) tumhari
+  apni 80 recordings pe train hua hai (temporal MFCC +
+  logistic regression; usman/adnan jaisay miltay-jultay
+  alfaz aur achanak shor ko reject karta hai).
+  Sirf `pip install numpy` ke baad on-device wake word
+  khud-ba-khud active ho jata hai — koi Colab, koi
+  account, koi onnxruntime nahi chahiye.
+- Dobara train karna ho (nayi recordings ke saath) toh
+  `AFNAN_WAKEWORD_MODEL` mein apne `.onnx` ka path do;
+  openWakeWord-format models bhi supported hain.
 - Status check: `detector_status(model_path)` batata hai
   ke on-device path ready hai ya fallback chal raha hai.
 
