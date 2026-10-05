@@ -105,6 +105,7 @@ class BackgroundTaskRunner:
         on_event: Callable[[dict[str, Any]], None] | None = None,
         max_concurrent: int = 1,
         poll_interval_s: float = 1.0,
+        security_center: Any = None,
     ):
         self.task_manager = task_manager
         self.run_task = run_task
@@ -119,6 +120,18 @@ class BackgroundTaskRunner:
         self._threads: list[threading.Thread] = []
         self._stop = threading.Event()
         self._started = False
+        # Central security: permission snapshots + policy
+        # revalidation after restarts.  Snapshots live in
+        # task metadata (capability ids + version only —
+        # never secrets).
+        self._security = security_center
+        if security_center is not None:
+            try:
+                security_center.emergency.register(
+                    self.stop
+                )
+            except Exception:
+                pass
 
     # -- events ---------------------------------------------------------
     def _emit(
@@ -136,6 +149,89 @@ class BackgroundTaskRunner:
                 self.on_event(entry)
             except Exception:
                 pass  # listeners never break the runner
+
+    # -- permission snapshots & policy revalidation ----------
+    def _snapshot_permissions(self, task: Any) -> dict[str, Any]:
+        center = self._security
+        if center is None:
+            return {}
+        actor = getattr(center, "agent_actor", None)
+        label = getattr(actor, "label", "agent:main")
+        capabilities = sorted(
+            center.permissions.capabilities_for(label)
+        )
+        current = center.versions.current()
+        return {
+            "capabilities": capabilities,
+            "policy_version": (
+                current.version_id if current else ""
+            ),
+        }
+
+    def _revalidate_policy(self, task: Any) -> Any | None:
+        """Return a failure outcome when the task must not
+        run under the current policy; otherwise snapshot the
+        current permissions and return None."""
+        center = self._security
+        if center is None:
+            return None
+        meta = getattr(task, "metadata", None) or {}
+        old = (
+            meta.get("permission_snapshot")
+            if isinstance(meta, dict) else None
+        )
+        snapshot = self._snapshot_permissions(task)
+        try:
+            task.metadata["permission_snapshot"] = snapshot
+            self.task_manager._save()
+        except Exception:
+            pass
+        current_version = snapshot.get("policy_version", "")
+        if (
+            isinstance(old, dict)
+            and old.get("policy_version")
+            and old.get("policy_version") != current_version
+        ):
+            # Policy changed since this task was queued:
+            # re-check that the capabilities it was given are
+            # still held.
+            revoked = [
+                c for c in (old.get("capabilities") or [])
+                if not center.permissions.check(
+                    getattr(
+                        center.agent_actor, "label",
+                        "agent:main",
+                    ),
+                    c,
+                )
+            ]
+            self._emit(
+                "policy_revalidated",
+                task_id=task.task_id,
+                message=(
+                    "Policy changed since queueing; "
+                    "capabilities re-checked"
+                ),
+                policy_version=current_version,
+                revoked=revoked,
+            )
+            if revoked:
+                self._emit(
+                    "task_policy_revoked",
+                    task_id=task.task_id,
+                    message=(
+                        "Capabilities revoked by policy "
+                        "change; task will not run"
+                    ),
+                    revoked=revoked,
+                )
+                return self._record_failure(
+                    task,
+                    "Capabilities revoked by policy change: "
+                    + ", ".join(revoked),
+                    code="policy_revoked",
+                )
+        return None
 
     # -- recovery ---------------------------------------------------------
     def recover(self) -> list[Any]:
@@ -185,6 +281,13 @@ class BackgroundTaskRunner:
             return None
 
     def _execute_claimed(self, task: Any) -> Any:
+        # Permission snapshot + policy revalidation: a task
+        # claimed after a restart (or a policy change) must
+        # re-check that its capabilities are still granted
+        # under the current policy version.
+        revalidation = self._revalidate_policy(task)
+        if revalidation is not None:
+            return revalidation
         resume_from = self._load_resume(task)
         self._emit(
             "task_started",

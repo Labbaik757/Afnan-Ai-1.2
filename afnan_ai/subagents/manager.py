@@ -112,6 +112,7 @@ class SubAgentManager:
         locks: ResourceLockManager | None = None,
         audit_path: str | Path | None = None,
         max_parallel: int = 4,
+        security_center: Any = None,
     ) -> None:
         self.tools = tool_registry
         self.loop_factory = loop_factory
@@ -128,6 +129,40 @@ class SubAgentManager:
         self._runtimes: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()
         self.decomposer = TaskDecomposer()
+        # Global emergency stop: a trip terminates every
+        # live subagent.  Only an explicit authorized reset
+        # lets new ones start.
+        self._security_center = None
+        self._security_cb_token = None
+        self.set_security_center(security_center)
+
+    def set_security_center(self, center: Any) -> None:
+        """Attach (or replace) the central SecurityCenter.
+
+        Used when the manager is constructed before the
+        center exists.  Emergency-callback registration is
+        idempotent: only one callback per manager."""
+        if center is None:
+            return
+        self._security_center = center
+        if self._security_cb_token is None:
+            try:
+                self._security_cb_token = (
+                    center.emergency.register(
+                        self._emergency_terminate
+                    )
+                )
+            except Exception:
+                self._security_cb_token = None
+
+    def _emergency_terminate(self) -> None:
+        with self._lock:
+            ids = list(self._records.keys())
+        for sid in ids:
+            try:
+                self.terminate(sid)
+            except Exception:
+                pass
 
     # -- lifecycle ------------------------------------------------------
     def create(self, spec: SubAgentSpec) -> SubAgentRecord:
@@ -156,6 +191,17 @@ class SubAgentManager:
             )
         record = SubAgentRecord(spec=spec)
         with self._lock:
+            if (
+                self._security_center is not None
+                and self._security_center.emergency
+                .is_tripped()
+            ):
+                raise SubAgentError(
+                    "refused: the global emergency stop is "
+                    "tripped; an authorized reset is required "
+                    "before new subagents may start",
+                    code="emergency_stop",
+                )
             self._records[spec.subagent_id] = record
         self._audit("created", record)
         self._grant_center_capabilities(spec)

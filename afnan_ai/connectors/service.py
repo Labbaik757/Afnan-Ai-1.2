@@ -110,7 +110,44 @@ class ConnectorService:
         self._connections: dict[str, ConnectionRecord] = {}
         self._sessions: dict[str, AuthSession] = {}
         self._last_results: dict[tuple[str, str], dict[str, Any]] = {}
+        # Central security: the global emergency stop
+        # disconnects every live connector connection and
+        # refuses new executions until an authorized reset.
+        self._security_center = None
+        self._security_cb_token = None
 
+    def set_security_center(self, center: Any) -> None:
+        if center is None:
+            return
+        self._security_center = center
+        if self._security_cb_token is None:
+            try:
+                self._security_cb_token = (
+                    center.emergency.register(
+                        self._emergency_disconnect
+                    )
+                )
+            except Exception:
+                self._security_cb_token = None
+
+    def _emergency_disconnect(self) -> None:
+        for connector_id in list(self._connections.keys()):
+            try:
+                self.disconnect(connector_id, _quiet=True)
+            except Exception:
+                pass
+
+    def _check_emergency(self) -> None:
+        center = self._security_center
+        if (
+            center is not None
+            and center.emergency.is_tripped()
+        ):
+            raise ConnectorException(
+                "refused: the global emergency stop is "
+                "tripped; an authorized reset is required",
+                code=ConnectorErrorCode.EMERGENCY_STOP,
+            )
     # -- credentials (secure channel, never tool arguments) ------------
     def provide_credentials(
         self, connector_id: str, values: dict[str, str]
@@ -298,6 +335,7 @@ class ConnectorService:
         :class:`ConnectorError` for every expected failure mode.
         """
         started = time.monotonic()
+        self._check_emergency()
         connector = self.registry.get(connector_id)
         spec = connector.get_operation(operation)
         params = self._validate_parameters(spec, parameters)

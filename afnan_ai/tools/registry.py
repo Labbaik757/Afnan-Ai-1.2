@@ -45,6 +45,10 @@ class ToolRegistry:
         if tools:
             self.register_many(tools)
 
+    def set_security_center(self, center: Any) -> None:
+        """Attach the central SecurityCenter (late binding)."""
+        self.security_center = center
+
     # -- registration -----------------------------------------------------
     def register(self, tool: Tool, *, replace: bool = False) -> Tool:
         if not isinstance(tool, Tool):
@@ -67,9 +71,10 @@ class ToolRegistry:
             )
         self._tools[name] = tool
         # Registration is a developer trust action: the
-        # agent actor gains the tool's domain capability so
-        # centrally-authorized calls keep working as tools
-        # are added dynamically.
+        # agent actor gains the tool's domain capability and,
+        # where the central system knows one, its capability
+        # id — centrally-authorized calls keep working as
+        # tools are added dynamically.
         center = self.security_center
         if center is not None:
             domain, _, _ = name.partition("_")
@@ -77,6 +82,22 @@ class ToolRegistry:
                 center.grant_agent_capabilities(
                     f"{domain}.*"
                 )
+            try:
+                from afnan_ai.security.policy import (
+                    TOOL_CAPABILITY_MAP,
+                )
+                capability_id = TOOL_CAPABILITY_MAP.get(
+                    name
+                )
+            except Exception:
+                capability_id = None
+            if capability_id:
+                try:
+                    center.grant_capability(
+                        center.agent_actor, capability_id
+                    )
+                except KeyError:
+                    pass
         return tool
 
     def register_many(self, tools: Iterable[Tool]) -> None:
@@ -203,15 +224,40 @@ class ToolRegistry:
         tool = self._tools.get(name)
         # (already resolved above; kept for clarity)
 
+        decision = None
+        actor_label = ""
+        if center is not None:
+            actor_label = (
+                actor or center.agent_actor.label
+            )
+
         try:
             output = tool.execute(merged)
         except ToolException as e:
             # Already structured — preserve its code/message/details
             if e.error.tool is None:
                 e.error.tool = name
+            if center is not None:
+                center.record_execution_result(
+                    tool_name=name,
+                    actor=actor_label,
+                    task_id="",
+                    success=False,
+                    failure_reason=e.error.message,
+                )
             return ToolResult.fail(name, e.error)
         except Exception as e:
             # A tool crash must never crash the caller
+            if center is not None:
+                center.record_execution_result(
+                    tool_name=name,
+                    actor=actor_label,
+                    task_id="",
+                    success=False,
+                    failure_reason=(
+                        f"{type(e).__name__}: {e}"
+                    ),
+                )
             return ToolResult.fail(
                 name,
                 ToolError(
@@ -223,8 +269,21 @@ class ToolRegistry:
             )
 
         if isinstance(output, ToolResult):
-            return output
-        return ToolResult.ok(name, output)
+            result = output
+        else:
+            result = ToolResult.ok(name, output)
+        if center is not None:
+            center.record_execution_result(
+                tool_name=name,
+                actor=actor_label,
+                task_id="",
+                success=bool(result.success),
+                failure_reason=(
+                    "" if result.success
+                    else str(result.error)
+                ),
+            )
+        return result
 
     def execute_or_raise(
         self,
