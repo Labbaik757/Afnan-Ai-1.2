@@ -598,6 +598,60 @@ def main() -> int:
         failures.append(f"subagents smoke check crashed: {e}")
         print(f"FAIL: subagents smoke check crashed: {e}")
 
+    # ---- Artifact System ------------------------------------------------
+    # Artifacts live in afnan_ai/artifacts and know nothing about
+    # browser/computer/connector/playwright or the loop.  The
+    # loop stays artifacts-agnostic: artifact_* tools call the
+    # manager, and agent.py wires them lazily.
+    artifacts_dir = ROOT / "afnan_ai" / "artifacts"
+    artifacts_coupling = []
+    for path in sorted(artifacts_dir.glob("*.py")):
+        source = path.read_text()
+        for bad in (
+            "afnan_ai.browser", "afnan_ai.computer",
+            "afnan_ai.connectors", "afnan_ai.agent_loop",
+            "playwright",
+        ):
+            if bad and bad in source:
+                artifacts_coupling.append(f"{path.name}:{bad}")
+                break
+    if artifacts_coupling:
+        failures.append(
+            f"artifacts layer coupling: {artifacts_coupling}"
+        )
+        print(
+            f"FAIL: artifacts layer coupling: {artifacts_coupling}"
+        )
+    else:
+        print("OK: artifacts layer is decoupled (no browser/computer/connector/loop imports)")
+
+    if "afnan_ai.artifacts" in loop_source:
+        failures.append("agent_loop imports the artifacts package")
+        print(
+            "FAIL: agent_loop.py references afnan_ai.artifacts"
+        )
+    else:
+        print("OK: AgentLoop stays artifacts-agnostic")
+
+    try:
+        from afnan_ai.artifacts import (
+            ArtifactManager, ArtifactWorkspace, ArtifactVerifier,
+        )
+        import tempfile
+
+        _ws = ArtifactWorkspace(tempfile.mkdtemp())
+        _mgr = ArtifactManager(_ws)
+        _a = _mgr.create(
+            name="guard probe", artifact_type="document",
+            data={"title": "probe",
+                  "sections": [{"heading": "s", "body": "b"}]},
+        )
+        assert _mgr.read(_a.artifact_id).startswith(b"# probe")
+        print("OK: artifacts package imports cleanly")
+    except Exception as e:  # noqa: BLE001 - report, don't crash
+        failures.append(f"artifacts smoke check crashed: {e}")
+        print(f"FAIL: artifacts smoke check crashed: {e}")
+
     try:
         from afnan_ai.context import (
             ContextManager, TrajectoryStore, ContextBudget,
