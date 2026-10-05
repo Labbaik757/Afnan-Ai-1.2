@@ -210,6 +210,39 @@ def set_challenge_handler(handler):
     _agent.set_challenge_handler(handler)
 
 
+def console_challenge_handler(detection):
+    """Interactive human-check prompt (the browser-style flow).
+
+    A CAPTCHA/verification page pauses the task: the user is
+    told to solve the check in the browser themselves, and the
+    agent resumes automatically once the page clears.  The
+    agent never solves the challenge.  Returns True when the
+    user confirms (Enter), False to stay paused.
+    """
+    kind = (detection or {}).get("type") or "human check"
+    message = (
+        f"A {kind} check is open in the browser. Please solve "
+        "it in the browser window, then press Enter here and "
+        "I will continue."
+    )
+    print(message)
+    try:
+        _agent.speak(
+            "A captcha check is open. Please solve it in the "
+            "browser, then press Enter."
+        )
+    except Exception:
+        pass
+    try:
+        answer = input(
+            "Solve the check in the browser, then press Enter "
+            "to continue (or type 'no' to stop): "
+        )
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer.strip().lower() not in ("no", "n", "cancel", "stop")
+
+
 def listen_command(timeout=5, phrase_time=6):
     return _agent.listen_command(timeout=timeout, phrase_time=phrase_time)
 
@@ -235,6 +268,9 @@ def process_command(command):
 
 
 def start_afnan():
+    # Interactive mode: on a human check, prompt the user to
+    # solve it in the browser; the task resumes once it clears.
+    set_challenge_handler(console_challenge_handler)
     _agent.start()
 
 

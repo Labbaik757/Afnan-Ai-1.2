@@ -15,6 +15,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from afnan_ai.agent import AfnanAgent
 from afnan_ai.browser.backend import BrowserBackend
@@ -896,6 +897,59 @@ class TestChallengeHumanFlow(unittest.TestCase):
         other = lambda d: False  # noqa: E731
         agent.set_challenge_handler(other)
         self.assertIs(agent.browser.challenge_handler, other)
+
+
+class TestConsoleChallengeHandler(unittest.TestCase):
+    """The interactive browser-style flow wired into main."""
+
+    def test_enter_accepts_no_declines_eof_abstains(self):
+        import main
+
+        detection = {"type": "recaptcha", "detected": True}
+        with mock.patch("builtins.input", return_value=""):
+            self.assertTrue(
+                main.console_challenge_handler(detection)
+            )
+        with mock.patch("builtins.input", return_value="no"):
+            self.assertFalse(
+                main.console_challenge_handler(detection)
+            )
+        with mock.patch(
+            "builtins.input", side_effect=EOFError
+        ):
+            self.assertFalse(
+                main.console_challenge_handler(detection)
+            )
+
+    def test_prompt_human_solve_and_resume(self):
+        import main
+
+        backend = DynamicBackend()
+        url = "https://site.example/challenge"
+        backend.add_page(
+            url, title="Security Check",
+            text="Verify you are human. I'm not a robot.",
+            elements=[el("button", "Verify", {"id": "verify"})],
+        )
+
+        def handler(detection):
+            # the human solves the check in the browser window
+            page = backend.pages[url]
+            page["text"] = "Welcome back, human."
+            page["title"] = "Home"
+            # ... then confirms at the prompt to continue
+            return main.console_challenge_handler(detection)
+
+        controller, _ = make_controller(
+            backend,
+            challenge_handler=handler,
+            challenge_wait_ms=2000,
+        )
+        controller.navigate(url)
+        found = controller.find_elements({"selector": "button"})
+        with mock.patch("builtins.input", return_value=""):
+            result = controller.click({"ref": found[0]["ref"]})
+        self.assertEqual(result["action"], "click")
 
 
 if __name__ == "__main__":
