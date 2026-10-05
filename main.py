@@ -252,6 +252,22 @@ def get_trajectory_store():
     return _agent.get_trajectory_store()
 
 
+def get_skill_registry():
+    """Return the versioned SkillRegistry."""
+    return _agent.get_skill_registry()
+
+
+def register_skill_tools() -> int:
+    """Expose active skills as skill_<id> tools; returns count."""
+    return _agent.register_skill_tools()
+
+
+def set_skill_approver(approver) -> None:
+    """Set the human approver for sensitive/destructive
+    skill execution (None restores fail-safe refusal)."""
+    return _agent.set_skill_approver(approver)
+
+
 def get_memory_store():
     """Return the persistent MemoryStore (verified facts,
     preferences, task summaries; secrets are refused)."""

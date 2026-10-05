@@ -467,6 +467,72 @@ def main() -> int:
     else:
         print("OK: AgentLoop stays context-agnostic (factory-injected)")
 
+    # ---- Dynamic Tool & Skill Builder --------------------------------
+    # Skills compose existing tools; the package must stay free
+    # of browser/computer/connector/driver coupling, must never
+    # import the agent loop at module level (lazy use only),
+    # and the AgentLoop itself must never import it at runtime
+    # (learner is injected).  A Skill is never a Tool subclass
+    # — only the SkillTool adapter bridges.
+    skills_dir = ROOT / "afnan_ai" / "skills"
+    skills_coupling = []
+    for path in sorted(skills_dir.glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        tree = _ast.parse(source)
+        top_imports = []
+        for node in tree.body:
+            if isinstance(node, _ast.Import):
+                top_imports.extend(a.name for a in node.names)
+            elif isinstance(node, _ast.ImportFrom):
+                top_imports.append(node.module or "")
+        for imported in top_imports:
+            for bad in ("afnan_ai.browser", "afnan_ai.computer",
+                        "afnan_ai.connectors", "afnan_ai.agent_loop",
+                        "playwright"):
+                if bad in imported:
+                    skills_coupling.append(
+                        f"{path.name}:{imported}"
+                    )
+        for bad in ("sys.platform", "startfile"):
+            if bad in source:
+                skills_coupling.append(f"{path.name}:{bad}")
+    if skills_coupling:
+        failures.append(
+            f"skills layer coupling: {skills_coupling}"
+        )
+        print(f"FAIL: skills layer coupling: {skills_coupling}")
+    else:
+        print("OK: skills layer is decoupled (no browser/computer/connector/loop imports)")
+
+    if "afnan_ai.skills" in loop_source:
+        failures.append("agent_loop imports the skills package")
+        print(
+            "FAIL: agent_loop.py references afnan_ai.skills — "
+            "the learner must stay injected, not imported"
+        )
+    else:
+        print("OK: AgentLoop stays skills-agnostic (learner injected)")
+
+    try:
+        from afnan_ai.skills import (
+            Skill, SkillRegistry, SkillTool, compose_skill,
+        )
+        from afnan_ai.tools.base import Tool
+        _probe = compose_skill(
+            skill_id="guard", name="Guard",
+            description="compat guard probe",
+            steps=[("s1", "search_google", {"query": "x"})],
+        )
+        assert not isinstance(_probe, Tool), \
+            "Skill must never subclass Tool"
+        assert isinstance(
+            SkillTool(_probe, SkillRegistry()), Tool
+        ), "SkillTool adapter must be a Tool"
+        print("OK: Skill/Tool responsibilities separated")
+    except Exception as e:  # noqa: BLE001 - report, don't crash
+        failures.append(f"skills smoke check crashed: {e}")
+        print(f"FAIL: skills smoke check crashed: {e}")
+
     try:
         from afnan_ai.context import (
             ContextManager, TrajectoryStore, ContextBudget,
