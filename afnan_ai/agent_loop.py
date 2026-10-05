@@ -258,6 +258,7 @@ class AgentLoop:
         context_manager_factory: Callable[[], Any] | None = None,
         trajectory_store: Any | None = None,
         skill_learner: Any | None = None,
+        security_center: Any | None = None,
     ):
         self.agent = agent
         self.observation_provider = observation_provider
@@ -282,6 +283,29 @@ class AgentLoop:
         # workflows become candidates, never live skills); the
         # loop never imports the skills package.
         self._skill_learner = skill_learner
+        # Central security: when wired, the loop halts on the
+        # global emergency stop at every cycle boundary and
+        # records execution outcomes back to the center.  The
+        # loop never re-implements policy decisions.
+        self._security = None
+        self._security_cb_token: Any = None
+        if security_center is not None:
+            self._security = security_center
+            # Cooperative halt: the loop stops at the next
+            # cycle boundary when the global emergency stop
+            # trips.  Resume is only possible after an
+            # explicit authorized reset.
+            def _halt() -> None:
+                if self._control_ref is not None:
+                    self._control_ref.request_stop()
+
+            try:
+                self._security_cb_token = (
+                    self._security.emergency.register(_halt)
+                )
+            except Exception:
+                self._security_cb_token = None
+        self._control_ref: Any = None
         self._ctx: Any | None = None
         self._ctx_task_id: str | None = None
         self._run_goal = ""
@@ -406,6 +430,31 @@ class AgentLoop:
             except Exception:
                 self._run_goals = []
         event_sink = on_event or self.on_event
+        # The emergency callback trips the loop's control; keep
+        # a live reference so it can act.
+        self._control_ref = control
+        # Never auto-resume after an emergency stop: a
+        # tripped stop refuses new runs until explicitly and
+        # authorized-ly reset.
+        if (
+            self._security is not None
+            and self._security.emergency.is_tripped()
+        ):
+            record = self._security.emergency.record()
+            failure_error = {
+                "code": "emergency_stop",
+                "message": (
+                    "Refused to start: the global emergency "
+                    f"stop is tripped ({record.reason if record else ''}). "
+                    "An authorized reset is required before "
+                    "work resumes."
+                ),
+                "details": {"resumable": False},
+            }
+            result.status = OrchestrationStatus.FAILED
+            result.error = failure_error
+            self._control_ref = None
+            return result
         task_state.add_observation(
             f"Agent received goal (agent loop): {goal}",
             source="agent",
@@ -474,6 +523,34 @@ class AgentLoop:
 
         while not stop:
             cycle += 1
+            # -- global emergency stop (never auto-resumes) --
+            if (
+                self._security is not None
+                and self._security.emergency.is_tripped()
+            ):
+                record = self._security.emergency.record()
+                outcome = OrchestrationStatus.FAILED
+                failure_error = {
+                    "code": "emergency_stop",
+                    "message": (
+                        "Emergency stop tripped "
+                        f"({record.reason if record else ''}); "
+                        "the loop halted and will not resume "
+                        "without an authorized reset"
+                    ),
+                    "details": {"resumable": False},
+                }
+                self._emit(
+                    EVENT_SECURITY,
+                    "Emergency stop tripped; loop halted",
+                    sink=event_sink,
+                    details={
+                        "reason": (
+                            record.reason if record else ""
+                        )
+                    },
+                )
+                break
             # -- cooperative control (worker foundation) --------
             if control is not None and control.stop_requested:
                 outcome = OrchestrationStatus.FAILED
@@ -1133,6 +1210,9 @@ class AgentLoop:
         # candidates (never live skills — promotion stays
         # explicit and audited).
         self._feed_skill_learner(executed, verifications, outcome)
+        # The emergency halt callback only acts while a run is
+        # live; drop the control reference so it stays inert.
+        self._control_ref = None
         result.events = [e.to_dict() for e in self.events]
         result.trajectory = list(self.trajectory)
         return result
@@ -1193,6 +1273,7 @@ class AgentLoop:
 
     def _finish_early(self, result, task_state, agent, error, sink):
         """First-call planning failure (same contract as before)."""
+        self._control_ref = None
         self._sync_context_metadata(task_state)
         agent._save_checkpoint(task_state, None, result)
         task_state.metadata["trajectory"] = self.trajectory[-300:]
