@@ -1135,6 +1135,187 @@ class BrowserDownloadsTool(_BrowserTool):
         }
 
 
+class BrowserNetworkStatusTool(_BrowserTool):
+    name = "browser_network_status"
+    description = (
+        "Diagnostic summary of the page's network activity: "
+        "failed requests, timeouts, blocked resources and HTTP "
+        "errors. Observation only — it cannot send requests."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {"tab_id": {"type": "string"}},
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        status = self._call(
+            self.controller.network_status,
+            tab_id=arguments.get("tab_id"),
+        )
+        return {
+            **status,
+            "observation": {
+                "type": "network_status",
+                "summary": (
+                    f"{status['failed_requests']} failed "
+                    f"request(s) of {status['total_requests']} "
+                    f"on this page."
+                ),
+            },
+        }
+
+
+class BrowserRateLimitTool(_BrowserTool):
+    name = "browser_rate_limit"
+    description = (
+        "Check whether the site is rate-limiting or blocking "
+        "automated access, or take one controlled backoff and "
+        "re-check. Never retries the failed action itself."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["check", "backoff"],
+                "default": "check",
+            },
+            "tab_id": {"type": "string"},
+            "max_wait_ms": {"type": "integer", "default": 5000},
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if str(arguments.get("action") or "check") == "backoff":
+            status = self._call(
+                self.controller.rate_limit_backoff,
+                tab_id=arguments.get("tab_id"),
+                max_wait_ms=int(
+                    arguments.get("max_wait_ms") or 5000
+                ),
+            )
+        else:
+            status = self._call(
+                self.controller.rate_limit_status,
+                tab_id=arguments.get("tab_id"),
+            )
+            status = {**status, "waited_ms": 0}
+        return {
+            **status,
+            "observation": {
+                "type": "rate_limit",
+                "summary": (
+                    "Rate limiting/blocking detected; "
+                    "controlled backoff advised."
+                    if status["limited"]
+                    else "No rate limiting detected."
+                ),
+            },
+        }
+
+
+class BrowserApprovalsTool(_BrowserTool):
+    name = "browser_approvals"
+    description = (
+        "List the approval gate's recorded decisions for "
+        "sensitive browser actions (purchases, sends, account "
+        "changes, uploads): what was asked, what the human "
+        "decided, and when. Arguments are shown redacted."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer", "default": 20},
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        limit = max(1, int(arguments.get("limit") or 20))
+        decisions = self.controller.approval_gate.decisions[-limit:]
+        return {
+            "decisions": decisions,
+            "count": len(decisions),
+            "observation": {
+                "type": "approvals",
+                "summary": (
+                    f"{len(decisions)} approval decision(s) "
+                    "recorded."
+                ),
+            },
+        }
+
+
+class BrowserProfilesTool(_BrowserTool):
+    name = "browser_profiles"
+    description = (
+        "Manage isolated browser profiles: each profile has its "
+        "own cookies, storage and tabs. Create a profile, select "
+        "the one a task should use, or list them. One profile is "
+        "active at a time and profiles never share session data."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["list", "create", "select", "current"],
+                "default": "list",
+            },
+            "name": {"type": "string"},
+            "preferences": {"type": "object"},
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        action = str(arguments.get("action") or "list")
+        controller = self.controller
+        if action == "list":
+            result: dict[str, Any] = {
+                "profiles": controller.list_profiles()
+            }
+        elif action == "current":
+            result = {
+                "profile": controller.profile_info(
+                    controller.current_profile
+                )
+            }
+        elif action == "create":
+            result = {
+                "profile": self._call(
+                    controller.create_profile,
+                    str(arguments.get("name") or ""),
+                    arguments.get("preferences") or {},
+                )
+            }
+        elif action == "select":
+            result = {
+                "profile": self._call(
+                    controller.select_profile,
+                    str(arguments.get("name") or ""),
+                )
+            }
+        else:
+            raise ToolExecutionError(
+                f"Unknown profile action {action!r}.",
+                tool=self.name,
+            )
+        return {
+            **result,
+            "observation": {
+                "type": "browser_profiles",
+                "summary": f"Profile action '{action}' completed.",
+            },
+        }
+
+
 class BrowserSessionTool(_BrowserTool):
     name = "browser_session"
     description = (
@@ -1252,6 +1433,10 @@ def create_browser_tools(
         BrowserCheckChallengeTool(controller),
         BrowserWaitChallengeTool(controller),
         BrowserDownloadsTool(controller),
+        BrowserNetworkStatusTool(controller),
+        BrowserRateLimitTool(controller),
+        BrowserApprovalsTool(controller),
+        BrowserProfilesTool(controller),
         BrowserSessionTool(controller),
     ]
 

@@ -38,6 +38,20 @@ logger = get_logger(__name__)
 
 # failure kind -> (strategy name, guidance for the replanner)
 _STRATEGIES: dict[str, tuple[str, str]] = {
+    "rate_limited": (
+        "controlled_backoff",
+        "The site is rate-limiting or blocking automated access. "
+        "Do not retry aggressively and do not repeat the action: "
+        "pause with a controlled backoff (browser_rate_limit) or "
+        "stop for a human if the block persists.",
+    ),
+    "network_failure": (
+        "network_diagnosis",
+        "Network failures were observed for this page. Check "
+        "browser_network_status for the failed requests before "
+        "retrying; fix the route or wait for connectivity rather "
+        "than repeating the same action.",
+    ),
     "human_required": (
         "human_intervention",
         "A human check (CAPTCHA / verification) is blocking the "
@@ -103,6 +117,8 @@ def _classify_failure(reason: str, evidence: dict[str, Any]) -> str:
     text = f"{reason} {evidence.get('error') or ''}".lower()
     if "human_required" in text or "human check" in text:
         return "human_required"
+    if "rate_limited" in text or "too many requests" in text:
+        return "rate_limited"
     if "no element matches" in text or "element_not_found" in text:
         return "element_not_found"
     if "timed out" in text or "timeout" in text:
@@ -111,6 +127,13 @@ def _classify_failure(reason: str, evidence: dict[str, Any]) -> str:
         return "stale_element"
     if "navigation" in text or "navigat" in text:
         return "navigation_failed"
+    if (
+        "network" in text
+        or "err_" in text
+        or "failed to load" in text
+        or "connection" in text
+    ):
+        return "network_failure"
     if (
         "not running" in text
         or "browser_not_started" in text
@@ -157,6 +180,10 @@ class BrowserReliability:
         "browser_wait_challenge",
         "browser_downloads",
         "browser_session",
+        "browser_network_status",
+        "browser_rate_limit",
+        "browser_approvals",
+        "browser_profiles",
     })
 
     def observe_state(self, step: Any = None) -> dict[str, Any] | None:
@@ -179,6 +206,10 @@ class BrowserReliability:
             return None
         try:
             observation["tabs"] = self.controller.list_tabs()
+        except Exception:
+            pass
+        try:
+            observation["network"] = self.controller.network_status()
         except Exception:
             pass
         return observation
@@ -212,6 +243,20 @@ class BrowserReliability:
         if isinstance(observation, dict):
             advice["current_url"] = observation.get("url")
             advice["current_title"] = observation.get("title")
+            network = observation.get("network")
+            if isinstance(network, dict) and network.get(
+                "failed_requests"
+            ):
+                advice["network_failures"] = network.get(
+                    "recent_failures"
+                )
+                advice["advice"] = (
+                    guidance
+                    + f" Note: {network['failed_requests']} "
+                    "network request(s) failed on this page "
+                    "(see network_failures); check "
+                    "browser_network_status before retrying."
+                )
             candidates = self._candidate_locators(observation)
             if candidates:
                 advice["candidate_locators"] = candidates

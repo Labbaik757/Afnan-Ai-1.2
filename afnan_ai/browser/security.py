@@ -26,7 +26,9 @@ responsibilities stay exactly where they were.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable
 
@@ -190,6 +192,11 @@ class SecurityPolicy:
         })
     )
     blocked_categories: frozenset = field(default_factory=frozenset)
+    #: A human answer that arrives later than this is treated as
+    #: a timeout: the action does not run.  None disables the
+    #: timeout (the approver's answer is accepted whenever it
+    #: arrives).
+    approval_timeout_s: float | None = None
 
     def requires_approval(self, category: str) -> bool:
         return category in self.require_approval_for
@@ -303,27 +310,51 @@ class ApprovalGate:
             return decision
 
         try:
+            started = time.monotonic()
             allowed = bool(self.approver(request))
+            elapsed = time.monotonic() - started
         except Exception as e:  # a broken approver never allows
             allowed = False
+            elapsed = 0.0
             logger.warning(
                 "approver raised for %s (%s): %s",
                 tool_name, risk.category, e,
             )
+        timeout = self.policy.approval_timeout_s
+        if timeout is not None and elapsed > timeout:
+            # Answered too late: the request has expired, so the
+            # action does not run even on a late "yes".
+            decision = ApprovalDecision(
+                False, risk,
+                f"Approval request timed out after {elapsed:.1f}s "
+                f"(limit {timeout}s); action not executed",
+            )
+            self._record(
+                risk, decision, tool_name, request, outcome="timeout"
+            )
+            return decision
         decision = ApprovalDecision(
             allowed, risk,
             "Approved by human approver" if allowed
             else "Denied by human approver",
         )
-        self._record(risk, decision, tool_name, request)
+        self._record(
+            risk, decision, tool_name, request,
+            outcome="approved" if allowed else "denied",
+        )
         return decision
 
-    def _record(self, risk, decision, tool_name, request=None) -> None:
+    def _record(self, risk, decision, tool_name, request=None,
+                outcome: str | None = None) -> None:
         entry = {
             "tool_name": tool_name,
             "category": risk.category,
             "allowed": decision.allowed,
             "detail": decision.detail,
+            "outcome": outcome or (
+                "approved" if decision.allowed else "denied"
+            ),
+            "decided_at": datetime.now(timezone.utc).isoformat(),
         }
         if request is not None:
             entry["request"] = request.to_dict()
