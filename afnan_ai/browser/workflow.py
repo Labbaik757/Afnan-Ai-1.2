@@ -111,9 +111,24 @@ class BrowserWorkflow:
         state: AgentState | None = None,
         max_iterations: int | None = None,
         max_duration_s: float | None = None,
+        loop: bool = False,
+        max_steps: int = 20,
+        batch_limit: int = 3,
+        max_replans: int = 6,
+        max_llm_calls: int = 12,
+        max_repeated_actions: int = 2,
     ) -> BrowserTaskResult:
         """Plan, execute, observe, verify and (if needed) recover
-        one browser goal, then answer from the evidence."""
+        one browser goal, then answer from the evidence.
+
+        With ``loop=True`` the task runs as a true
+        observation-driven loop: the Planner proposes only the
+        next few actions from the current state, every action is
+        verified against a fresh observation, and the Planner
+        re-decides after each batch (bounded by max_steps,
+        max_replans, max_llm_calls and max_repeated_actions)
+        instead of executing one long pre-generated plan.
+        """
         goal = str(goal or "").strip()
         if not goal:
             raise ValueError("run_goal needs a non-empty goal")
@@ -122,12 +137,24 @@ class BrowserWorkflow:
                 self.controller.select_profile(profile)
             task_state = state or AgentState.create(goal)
             self._brief(task_state)
-            result = self.orchestrator.run(
-                goal,
-                state=task_state,
-                max_iterations=max_iterations,
-                max_duration_s=max_duration_s,
-            )
+            if loop:
+                result = self.orchestrator.run_loop(
+                    goal,
+                    state=task_state,
+                    max_steps=max_steps,
+                    batch_limit=batch_limit,
+                    max_replans=max_replans,
+                    max_llm_calls=max_llm_calls,
+                    max_repeated_actions=max_repeated_actions,
+                    max_duration_s=max_duration_s,
+                )
+            else:
+                result = self.orchestrator.run(
+                    goal,
+                    state=task_state,
+                    max_iterations=max_iterations,
+                    max_duration_s=max_duration_s,
+                )
         except BrowserException as exc:
             return BrowserTaskResult(
                 goal=goal,

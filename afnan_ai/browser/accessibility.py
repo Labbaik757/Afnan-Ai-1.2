@@ -21,6 +21,7 @@ name locator instead, resolvable through find_elements.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # Roles that a user can act on (used by semantic ranking).
@@ -127,6 +128,54 @@ def normalize_snapshot(raw: Any) -> list[dict[str, Any]]:
         for item in raw:
             walk(item, 0)
     return nodes
+
+
+_ARIA_LINE_RE = re.compile(
+    r"^(?P<indent>[ ]*)- (?P<role>[a-zA-Z][a-zA-Z0-9-]*)"
+    r"(?: \"(?P<name>(?:[^\"\\]|\\.)*)\")?(?P<rest>.*)$"
+)
+_ARIA_LEVEL_RE = re.compile(r"\[level=(\d+)\]")
+
+
+def parse_aria_snapshot(text: str) -> dict[str, Any]:
+    """Parse Playwright's ``aria_snapshot()`` YAML into a tree.
+
+    The modern Playwright accessibility API returns indented
+    YAML lines (``- button \"Sign in\"``); this converts them to
+    the ``{role, name, children, level}`` dict tree that
+    :func:`normalize_snapshot` already understands, so the
+    deprecated ``page.accessibility`` API is never needed.
+    Returns a synthetic root node (possibly with no children).
+    """
+    root: dict[str, Any] = {
+        "role": "document", "name": "", "children": [],
+    }
+    stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
+    for line in str(text or "").splitlines():
+        if not line.strip() or not line.lstrip().startswith("- "):
+            continue
+        match = _ARIA_LINE_RE.match(line)
+        if not match:
+            continue
+        indent = len(match.group("indent")) // 2
+        role = match.group("role").lower()
+        name = (match.group("name") or "").replace('\\"', '"')
+        rest = match.group("rest") or ""
+        node: dict[str, Any] = {"role": role, "name": name,
+                                 "children": []}
+        if role == "text":
+            # "- text: some content" carries its text inline
+            inline = rest.lstrip(": ").strip()
+            if inline:
+                node["name"] = inline
+        level = _ARIA_LEVEL_RE.search(rest)
+        if level:
+            node["level"] = int(level.group(1))
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        stack[-1][1]["children"].append(node)
+        stack.append((indent, node))
+    return root
 
 
 def derive_nodes(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -505,6 +505,7 @@ class AfnanAgent:
         profile: str | None = None,
         max_iterations: int | None = None,
         max_duration_s: float | None = None,
+        loop: bool = False,
     ):
         """Run one autonomous browser goal end to end.
 
@@ -513,7 +514,9 @@ class AfnanAgent:
         browser briefing (tabs, current page, profile) before
         acting and composes the final answer from recorded
         evidence (search results, extracted content, verified
-        steps, downloads).
+        steps, downloads).  ``loop=True`` switches execution to
+        the observation-driven loop (small re-decided batches
+        instead of one long plan).
         """
         if self.browser_workflow is None:
             raise RuntimeError(
@@ -524,6 +527,7 @@ class AfnanAgent:
             profile=profile,
             max_iterations=max_iterations,
             max_duration_s=max_duration_s,
+            loop=loop,
         )
         if outcome.state is not None:
             self.state = outcome.state

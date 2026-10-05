@@ -189,6 +189,9 @@ class SecurityPolicy:
             "destructive",
             "file_upload",
             "form_submit",
+            # A natural-language target matched with low
+            # confidence must be confirmed by a human.
+            "uncertain_target",
         })
     )
     blocked_categories: frozenset = field(default_factory=frozenset)
