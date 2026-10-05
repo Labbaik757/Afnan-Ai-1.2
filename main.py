@@ -228,6 +228,25 @@ def set_computer_approver(approver) -> None:
     return _agent.set_computer_approver(approver)
 
 
+def get_connector_registry():
+    """Return the ConnectorRegistry for external-service
+    integrations (None when connector tools are disabled)."""
+    return _agent.get_connector_registry()
+
+
+def get_connector_service():
+    """Return the ConnectorService (credentials, scopes,
+    approval, execution, audit)."""
+    return _agent.get_connector_service()
+
+
+def set_connector_approver(approver) -> None:
+    """Set the human approver for sensitive/irreversible
+    connector operations (None restores the fail-safe
+    refusal)."""
+    return _agent.set_connector_approver(approver)
+
+
 def get_memory_store():
     """Return the persistent MemoryStore (verified facts,
     preferences, task summaries; secrets are refused)."""

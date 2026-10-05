@@ -348,6 +348,75 @@ def main() -> int:
             " (ChromiumAdapter via CDP, PlaywrightAdapter fallback)"
         )
 
+    # ---- Connector System: isolated, core-agnostic -------------------
+    # Connectors live in afnan_ai/connectors and know nothing
+    # about the browser/computer stacks; the core
+    # planner/executor/verifier/orchestrator/recovery never
+    # import connectors directly (the agent wires them lazily).
+    connector_dir = ROOT / "afnan_ai" / "connectors"
+    connector_coupling = []
+    for path in sorted(connector_dir.glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        for bad in ("afnan_ai.browser", "afnan_ai.computer",
+                    "import playwright", "sys.platform"):
+            if bad in source:
+                connector_coupling.append(f"{path.name}:{bad}")
+    if connector_coupling:
+        failures.append(
+            f"connector layer coupling: {connector_coupling}"
+        )
+        print(f"FAIL: connector layer coupling: {connector_coupling}")
+    else:
+        print("OK: connector layer is browser/computer agnostic")
+
+    connector_importers = []
+    for name in ("planner.py", "executor.py", "verifier.py",
+                 "orchestrator.py", "recovery.py"):
+        source = (ROOT / "afnan_ai" / name).read_text(encoding="utf-8")
+        if "afnan_ai.connectors" in source or "ConnectorService" in source:
+            connector_importers.append(name)
+    if connector_importers:
+        failures.append(
+            f"core imports connectors: {connector_importers}"
+        )
+        print(
+            f"FAIL: {connector_importers} import connectors — "
+            "the core must stay connector-agnostic"
+        )
+    else:
+        print("OK: core planner/executor/verifier stay connector-agnostic")
+
+    try:
+        from afnan_ai.connectors import (
+            ConnectorRegistry,
+            ConnectorService,
+            create_connector_tools,
+        )
+        _stub_registry = ConnectorRegistry()
+        connector_tool_names = sorted(
+            t.name for t in create_connector_tools(
+                ConnectorService(_stub_registry)
+            )
+        )
+        expected_connector_tools = [
+            "connector_capabilities",
+            "connector_connect",
+            "connector_disconnect",
+            "connector_execute",
+            "connector_health_check",
+            "connector_list",
+        ]
+        if connector_tool_names != expected_connector_tools:
+            failures.append(
+                f"connector tools mismatch: {connector_tool_names}"
+            )
+            print(f"FAIL: connector tools are {connector_tool_names}")
+        else:
+            print(f"OK: connector tools are {connector_tool_names}")
+    except Exception as e:  # noqa: BLE001 - report, don't crash
+        failures.append(f"connector tools check crashed: {e}")
+        print(f"FAIL: connector tools check crashed: {e}")
+
     for path in sorted(ROOT.rglob("*.py")):
         if ".git" in path.parts or "__pycache__" in path.parts:
             continue
