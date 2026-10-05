@@ -158,6 +158,22 @@ class BrowserController:
         self._profiles: dict[str, dict[str, Any]] = {
             "default": {"name": "default", "preferences": {}}
         }
+        # Profiles persisted by the runtime (previous sessions)
+        # are known from the start, so they can be selected
+        # without being re-created.
+        try:
+            for entry in self.runtime.list_profiles():
+                self._profiles.setdefault(
+                    entry["name"],
+                    {
+                        "name": entry["name"],
+                        "preferences": dict(
+                            entry.get("preferences") or {}
+                        ),
+                    },
+                )
+        except Exception:
+            pass
         self._active_profile = "default"
         self._profile_tabs: dict[
             str, tuple[dict[str, _Tab], str | None]
@@ -1805,6 +1821,14 @@ class BrowserController:
                 details={"profile": name},
             )
         clean = self._sanitize_preferences(preferences)
+        # Register with the runtime first: its persistent
+        # profile registry gives the engine the profile's own
+        # storage directory (and the profile survives restarts).
+        try:
+            if self.runtime.get_profile(name) is None:
+                self.runtime.create_profile(name, clean)
+        except BrowserException:
+            pass
         # driver context first: if the backend cannot isolate
         # profiles, nothing is registered here either
         self.runtime.create_profile_context(name, clean)
