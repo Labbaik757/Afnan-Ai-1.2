@@ -316,6 +316,11 @@ class AfnanAgent:
         )
         self._task_worker = None
         self._background_runner = None
+        # Placeholder: the SecurityCenter is built near the
+        # end of __init__ (after every tool family is
+        # registered); consumers that accept it earlier
+        # receive None and get wired when it exists.
+        self.security_center = None
         # Long-context & trajectory reasoning: the per-task
         # TrajectoryStore persists every run's trajectory
         # (observations, decisions, actions, verifications,
@@ -435,6 +440,7 @@ class AfnanAgent:
             loop_factory=self._build_subagent_loop,
             security=self.subagent_security,
             audit_path=str(memory_base / "subagent_audit.jsonl"),
+            security_center=self.security_center,
         )
         # Artifact System: research/task results become real,
         # versioned, verified deliverables.  The manager is a
@@ -494,6 +500,35 @@ class AfnanAgent:
             if enable_security_center
             else None
         )
+        if self.security_center is not None:
+            # Managers constructed before the center existed.
+            self.subagent_manager.set_security_center(
+                self.security_center
+            )
+            if self.connector_service is not None:
+                self.connector_service.set_security_center(
+                    self.security_center
+                )
+            # Browser runtime: emergency stop closes pages
+            # and refuses new engine calls until reset.
+            runtime = getattr(
+                self.browser, "runtime", None
+            )
+            if runtime is not None and hasattr(
+                runtime, "set_security_center"
+            ):
+                runtime.set_security_center(
+                    self.security_center
+                )
+            # Computer controller: emergency stop refuses
+            # new desktop actions until reset.
+            computer = getattr(self, "computer", None)
+            if computer is not None and hasattr(
+                computer, "set_security_center"
+            ):
+                computer.set_security_center(
+                    self.security_center
+                )
         self.orchestrator: OrchestratorAgent = orchestrator or OrchestratorAgent(
             planner=self.planner,
             executor=self.executor,
@@ -983,15 +1018,25 @@ class AfnanAgent:
         """Central, mandatory security authority.  Every
         tool call on this agent's registry is authorized
         through it."""
-        from afnan_ai.security import SecurityCenter
+        from afnan_ai.security import (
+            PolicyProfile,
+            SecurityCenter,
+        )
 
         center = SecurityCenter(
             audit_path=str(memory_base / "security_audit.jsonl"),
             approver=approver,
         )
-        # Capability-based defaults: the agent may use the
-        # domains its registered tools live in — least
-        # privilege narrows this per task/subagent/skill.
+        # Explicit owner profile (default Standard): the
+        # profile grants the agent exactly the capabilities
+        # its tool families need — no unrestricted defaults.
+        # Legacy domain wildcards below keep dynamically
+        # registered tools working; capability ids cover
+        # known tools with resource-level policy.
+        profile = getattr(
+            self, "_security_profile", PolicyProfile.STANDARD
+        )
+        center.apply_profile(profile)
         domains = set()
         for name in self.tools.names():
             domain, _, _ = str(name).partition("_")
@@ -1002,6 +1047,22 @@ class AfnanAgent:
         center.grant_agent_capabilities(*sorted(domains))
         self.tools.security_center = center
         return center
+
+    def apply_security_profile(
+        self, profile: "PolicyProfile | str"
+    ) -> dict[str, Any]:
+        """Owner-controlled profile switch: Restricted /
+        Standard / Advanced / Fully Authorized.  Publishes a
+        new policy version; background snapshots are
+        revalidated on next claim."""
+        if self.security_center is None:
+            raise RuntimeError(
+                "security center is disabled"
+            )
+        return self.security_center.apply_profile(
+            profile,
+            changelog="owner profile change",
+        )
 
     def _build_subagent_loop(
         self, spec, scoped_tools, context_text, checkpointer=None
@@ -1061,6 +1122,7 @@ class AfnanAgent:
             observation_provider=self._loop_observation,
             memory_store=self.memory_store,
             system_context_provider=_scoped_context,
+            security_center=self.security_center,
         )
 
     def _build_agent_loop(self):
@@ -1107,6 +1169,7 @@ class AfnanAgent:
             context_manager_factory=_context_factory,
             trajectory_store=self.trajectory_store,
             skill_learner=self.skill_learner,
+            security_center=self.security_center,
         )
 
     def run_agent_loop(self, goal, *, state=None, resume_from=None,
@@ -1279,6 +1342,7 @@ class AfnanAgent:
                 scheduler=self.scheduler,
                 checkpointer=self.checkpointer,
                 audit_log=AuditLog(str(audit_path)),
+                security_center=self.security_center,
             )
         return self._background_runner
 
