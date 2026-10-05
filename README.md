@@ -1502,6 +1502,96 @@ authorized state and surfaces evidence-based suggestions:
   `main` delegates).  Tests: `tests/test_proactive.py`
   (29 tests).
 
+## Security, Permissions & Audit Center
+
+`afnan_ai/security/` is the single mandatory security
+layer for browser, computer use, files, connectors,
+skills, subagents, background tasks and artifacts.  No
+subsystem invents its own policy — every tool call on the
+agent's registry is authorized through the center:
+
+    User Goal
+      ↓ AgentLoop
+      ↓ Decision
+      ↓ Security Policy Engine
+      ├── Permission Check (capability-based)
+      ├── Risk Classification
+      ├── Credential Policy
+      ├── Prompt-Injection Defense
+      ├── Rate / Resource Limits
+      └── Human Approval
+      ↓ Tool / Browser / Computer / Connector / Skill
+      ↓ Verifier
+      ↓ AuditLogger
+      ↓ Memory / Goal / Artifact Update
+
+- **PermissionManager** — capability-based (`browser.read`,
+  `email.send`), not role-based, for user / agent /
+  subagent / tool / skill / connector actors.  Least
+  privilege: a child's capabilities are the intersection
+  of requested and parent-held, so delegation can never
+  escalate privilege.
+- **Risk classification** — every action is classified
+  centrally and deterministically: `READ_ONLY` (webpage
+  read), `LOW_RISK_WRITE` (draft file create), `SENSITIVE`
+  (email/message send), `IRREVERSIBLE` (delete important
+  files, purchase, account changes).  Unknown actions fail
+  cautious (SENSITIVE), never open.
+- **Central enforcement** — `ToolRegistry.execute`
+  authorizes through the center before running anything:
+  validate → classify → injection screen → rate limits →
+  permission check → human approval → audit.  Denials and
+  approval holds come back as structured `permission_denied`
+  / `approval_required` results the loop already knows how
+  to pause on (resumable).
+- **Human approval** — structured requests carry action,
+  reason, target, risk level, expected consequence and
+  relevant context.  Non-agent actors (subagents,
+  background workers, skills) always go through central
+  approval — they cannot bypass it.  The main agent's own
+  tools keep their tested per-tool gates (the center
+  audits and defers); `strict_agent_approval=True`
+  centralizes even those.
+- **CredentialVault** — API keys, OAuth/refresh tokens,
+  passwords, cookies and session credentials live here
+  and only here.  Never in AgentState, memory, planner
+  output, LLM context, screenshots, logs or audit
+  records; every access is logged without the value.
+- **Prompt-injection defense** — trust levels
+  (`user_instruction` / `system_policy` may instruct;
+  `agent_state` / `tool_output` are data; `webpage` /
+  `email` / `document` are untrusted).  Instruction-shaped
+  text in low-trust content is flagged, never executed,
+  and never treated as a permission grant.
+- **AuditLogger** — hash-chained, tamper-evident
+  structured records (timestamp, task id, actor, action,
+  target, risk, permission result, approval status,
+  execution result, verification result) with secrets
+  redacted; `verify_chain()` detects tampering.
+- **Security events** — permission denied, approval
+  requested/granted/rejected, credential accessed,
+  suspicious instruction, prompt injection, sandbox
+  violation, repeated failed action, abnormal tool usage,
+  rate limited.
+- **Rate & abuse controls** — per-actor tool-call,
+  frequency, runtime, retry and resource budgets; repeated
+  suspicious behavior advises the orchestrator to pause or
+  terminate the task.
+- **Sandbox policy** — explicit allow/deny for generated
+  code (filesystem, network, process, environment;
+  credentials never) on top of the existing sandbox
+  architecture.
+- **Cross-platform** — one vocabulary on Windows, Linux
+  and macOS; OS-specific paths and sandbox behavior stay
+  inside the platform adapter.
+- **Agent wiring** — `AfnanAgent` builds the center after
+  all tools register (domain capabilities granted per
+  registration; `get_security_center()`,
+  `set_security_approver()`, `enable_security_center`,
+  `main` delegates).  Audit trail persists to
+  `security_audit.jsonl`.  Tests:
+  `tests/test_security_center.py` (54 tests).
+
 ## Autonomous browser workflow
 
 `run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,
