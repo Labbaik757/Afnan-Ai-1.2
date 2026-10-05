@@ -154,6 +154,7 @@ class BrowserReliability:
         "browser_wait_for_stable",
         "browser_collect_items",
         "browser_check_challenge",
+        "browser_wait_challenge",
         "browser_downloads",
         "browser_session",
     })

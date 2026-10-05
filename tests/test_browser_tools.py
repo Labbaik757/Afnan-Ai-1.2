@@ -56,6 +56,7 @@ EXPECTED_TOOLS = [
     "browser_shutdown",
     "browser_type",
     "browser_upload_file",
+    "browser_wait_challenge",
     "browser_wait_for",
     "browser_wait_for_stable",
 ]

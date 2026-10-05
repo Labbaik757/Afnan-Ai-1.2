@@ -1052,6 +1052,43 @@ class BrowserCheckChallengeTool(_BrowserTool):
         }
 
 
+class BrowserWaitChallengeTool(_BrowserTool):
+    name = "browser_wait_challenge"
+    description = (
+        "Wait for the page's human check (CAPTCHA/verification) to "
+        "be solved by the user in the browser. The challenge is "
+        "never solved automatically; this only watches until it "
+        "clears, then the task can continue."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "tab_id": {"type": "string"},
+            "timeout_ms": {"type": "integer", "default": 120000},
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        result = self._call(
+            self.controller.wait_for_challenge_clear,
+            tab_id=arguments.get("tab_id"),
+            timeout_ms=int(arguments.get("timeout_ms") or 120000),
+        )
+        return {
+            **result,
+            "status": "cleared",
+            "observation": {
+                "type": "challenge_wait",
+                "summary": (
+                    "Human check cleared by the user; "
+                    "task can continue."
+                ),
+            },
+        }
+
+
 class BrowserDownloadsTool(_BrowserTool):
     name = "browser_downloads"
     description = (
@@ -1213,6 +1250,7 @@ def create_browser_tools(
         BrowserWaitForStableTool(controller),
         BrowserCollectItemsTool(controller),
         BrowserCheckChallengeTool(controller),
+        BrowserWaitChallengeTool(controller),
         BrowserDownloadsTool(controller),
         BrowserSessionTool(controller),
     ]
