@@ -171,6 +171,24 @@ class BrowserBackend(ABC):
         """Downloads the driver has seen (empty by default)."""
         return []
 
+    def network_events(self, handle: Any) -> list[dict[str, Any]]:
+        """Requests the page made (failures / HTTP errors).
+
+        Observation only — there is deliberately no backend API
+        for firing arbitrary network requests.
+        """
+        return []
+
+    def create_profile_context(
+        self, name: str, options: dict[str, Any]
+    ) -> str:
+        """Create an isolated profile context (own cookies/storage)."""
+        self._unsupported("profile contexts")
+
+    def set_active_profile(self, name: str) -> None:
+        """Make the named profile context the active one."""
+        self._unsupported("profile contexts")
+
     def interactive_elements(
         self, handle: Any, limit: int
     ) -> list[Any]:
@@ -225,6 +243,11 @@ class PlaywrightBackend(BrowserBackend):
         self._context = None
         self._download_records: list[dict[str, Any]] = []
         self._downloads_dir = downloads_dir
+        # isolated profile contexts (own cookies/storage each)
+        self._contexts: dict[str, Any] = {}
+        self._active_profile: str = "default"
+        # per-page network events, keyed by page object id
+        self._network: dict[int, list[dict[str, Any]]] = {}
 
     # -- lifecycle ------------------------------------------------------
     def start(self, browser: str, headless: bool) -> None:
@@ -240,6 +263,8 @@ class PlaywrightBackend(BrowserBackend):
                 launch_kwargs["channel"] = channel
             self._browser = browser_type.launch(**launch_kwargs)
             self._context = self._browser.new_context()
+            self._contexts = {"default": self._context}
+            self._active_profile = "default"
         except BrowserException:
             self._cleanup()
             raise
@@ -260,6 +285,8 @@ class PlaywrightBackend(BrowserBackend):
             self._browser = self._playwright.chromium.connect_over_cdp(endpoint)
             contexts = self._browser.contexts
             self._context = contexts[0] if contexts else self._browser.new_context()
+            self._contexts = {"default": self._context}
+            self._active_profile = "default"
         except BrowserException:
             self._cleanup()
             raise
@@ -288,6 +315,9 @@ class PlaywrightBackend(BrowserBackend):
         self._browser = None
         self._context = None
         self._playwright = None
+        self._contexts = {}
+        self._active_profile = "default"
+        self._network = {}
 
     @staticmethod
     def _import_playwright():
@@ -318,7 +348,93 @@ class PlaywrightBackend(BrowserBackend):
             page.on("download", self._on_download)
         except Exception:
             pass
+        self._track_network(page)
         return page
+
+    # -- network awareness (observation only) ---------------------------
+
+    def _track_network(self, page: Any) -> None:
+        events: list[dict[str, Any]] = []
+        self._network[id(page)] = events
+
+        def record(entry: dict[str, Any]) -> None:
+            events.append(entry)
+            if len(events) > 200:  # bounded history per page
+                del events[:-200]
+
+        def on_failed(request: Any) -> None:
+            record({
+                "url": request.url,
+                "method": request.method,
+                "status": None,
+                "failure": request.failure,
+                "resource_type": request.resource_type,
+            })
+
+        def on_response(response: Any) -> None:
+            if response.status >= 400:
+                record({
+                    "url": response.url,
+                    "method": response.request.method,
+                    "status": response.status,
+                    "failure": None,
+                    "resource_type": response.request.resource_type,
+                })
+
+        try:
+            page.on("requestfailed", on_failed)
+            page.on("response", on_response)
+        except Exception:
+            pass
+
+    def network_events(self, handle: Any) -> list[dict[str, Any]]:
+        return [
+            dict(e) for e in self._network.get(id(handle), [])
+        ]
+
+    # -- profiles (isolated contexts) -------------------------------------
+
+    #: preference keys a profile may carry into a new context
+    _PROFILE_CONTEXT_KEYS = (
+        "user_agent", "locale", "timezone_id", "color_scheme",
+        "viewport",
+    )
+
+    def create_profile_context(
+        self, name: str, options: dict[str, Any]
+    ) -> str:
+        if self._browser is None:
+            raise BrowserException(
+                "Browser is not running",
+                code=BrowserErrorCode.BROWSER_NOT_STARTED,
+            )
+        if name in self._contexts:
+            return name
+        kwargs = {
+            key: options[key]
+            for key in self._PROFILE_CONTEXT_KEYS
+            if options.get(key) is not None
+        }
+        try:
+            self._contexts[name] = self._browser.new_context(**kwargs)
+        except Exception as e:
+            raise BrowserException(
+                f"Could not create browser profile {name!r}: {e}",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"profile": name},
+            ) from e
+        return name
+
+    def set_active_profile(self, name: str) -> None:
+        context = self._contexts.get(name)
+        if context is None:
+            raise BrowserException(
+                f"Unknown browser profile {name!r}",
+                code=BrowserErrorCode.OPERATION_FAILED,
+                details={"profile": name},
+            )
+        self._active_profile = name
+        self._context = context
 
     def _on_download(self, download: Any) -> None:
         """Record a browser download; it is saved, never opened."""

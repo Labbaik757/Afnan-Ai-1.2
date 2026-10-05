@@ -88,7 +88,10 @@ class SessionManager:
         to load are listed under ``failed`` instead of aborting the
         whole restore — an expired/gone session degrades gracefully.
         """
-        data = self.load(path)
+        return self.restore_data(self.load(path))
+
+    def restore_data(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Re-open tabs from an in-memory session snapshot."""
         restored: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
         for tab in data.get("tabs") or []:
