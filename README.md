@@ -945,6 +945,51 @@ Entry points: `agent.run_agent_loop(...)` /
 `Orchestrator.run_loop` delegates to the same loop.  Tests:
 `tests/test_agent_loop.py`.
 
+## Persistent memory, goals and long-running tasks
+
+Long-term state lives outside the (temporary) AgentState in
+three persistent, replaceable stores under `~/.afnan-ai/`
+(configurable via `memory_dir=`):
+
+- **MemoryStore** (`afnan_ai/memory_store.py`): long-term
+  memory — user preferences, verified facts, project context,
+  past task summaries.  Every record carries source,
+  timestamp, confidence and metadata; retrieval ranks by
+  relevance + confidence + recency.  Only trusted sources
+  (the user, verified agent results, system configuration)
+  may write: webpages, emails and other untrusted content can
+  never create memory directly, content containing secret
+  material (passwords, tokens, API keys, cookies) is refused
+  outright, and conflicts are resolved by confidence/source
+  authority — never blindly overwritten.  The backend is an
+  interface; the shipped implementation is a local
+  atomic-JSON store that degrades to empty on corruption
+  instead of crashing the agent.
+- **GoalManager** (`afnan_ai/goal_manager.py`): persistent
+  goals with status, priority, milestones, dependencies,
+  completion criteria and linked tasks; progress is computed
+  from verified milestones only.
+- **TaskManager + TaskWorker** (`afnan_ai/task_manager.py`):
+  a persistent task queue (pending / running / paused /
+  waiting_for_approval / completed / failed / cancelled) with
+  retry budgets, timeouts and checkpoint references.  A
+  process restart recovers `running` tasks as `paused` —
+  resumable, never auto-executed.  The worker runs tasks
+  through the AgentLoop only when explicitly invoked
+  (`run_pending` / `resume_task`); it starts no background
+  execution by itself, and approval-needed outcomes park the
+  task as `waiting_for_approval`.
+
+The AgentLoop loads relevant memories + active goals into
+every decision cycle (stored memories containing
+instruction-like text are excluded as prompt-injection
+defense), and on completion promotes only the verified
+outcome to a `task_summary` memory and records verified
+progress against the linked goal.  Entry points:
+`agent.get_memory_store()` / `get_goal_manager()` /
+`get_task_manager()` / `get_task_worker()` (and the `main`
+delegates).  Tests: `tests/test_memory_goals_tasks.py`.
+
 ## Autonomous browser workflow
 
 `run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,

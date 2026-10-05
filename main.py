@@ -210,6 +210,28 @@ def run_agent_loop(goal, **kwargs):
     return _agent.run_agent_loop(goal, **kwargs)
 
 
+def get_memory_store():
+    """Return the persistent MemoryStore (verified facts,
+    preferences, task summaries; secrets are refused)."""
+    return _agent.get_memory_store()
+
+
+def get_goal_manager():
+    """Return the persistent GoalManager."""
+    return _agent.get_goal_manager()
+
+
+def get_task_manager():
+    """Return the persistent TaskManager (task queue)."""
+    return _agent.get_task_manager()
+
+
+def get_task_worker():
+    """Return the explicitly-invoked TaskWorker over the
+    task queue."""
+    return _agent.get_task_worker()
+
+
 def get_recovery():
     """Return the RecoveryManager used by the orchestrator
     (replans after failed/uncertain steps, attempts recorded
