@@ -273,6 +273,17 @@ def get_subagent_manager():
     return _agent.get_subagent_manager()
 
 
+def get_artifact_manager():
+    """Return the ArtifactManager for deliverables."""
+    return _agent.get_artifact_manager()
+
+
+def set_artifact_approver(approver) -> None:
+    """Set the human approver for destructive artifact
+    operations (None restores fail-safe refusal)."""
+    return _agent.set_artifact_approver(approver)
+
+
 def get_memory_store():
     """Return the persistent MemoryStore (verified facts,
     preferences, task summaries; secrets are refused)."""

@@ -110,6 +110,9 @@ class AfnanAgent:
         skill_registry=None,
         skill_approver=None,
         enable_skill_tools: bool = True,
+        artifact_workspace_dir=None,
+        artifact_approver=None,
+        enable_artifact_tools: bool = True,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -428,6 +431,30 @@ class AfnanAgent:
             security=self.subagent_security,
             audit_path=str(memory_base / "subagent_audit.jsonl"),
         )
+        # Artifact System: research/task results become real,
+        # versioned, verified deliverables.  The manager is a
+        # controlled interface — the agent builds artifacts
+        # through data-driven builders, never by executing
+        # arbitrary code against the filesystem.
+        from afnan_ai.artifacts import (
+            ArtifactManager,
+            ArtifactWorkspace,
+            create_artifact_tools,
+        )
+
+        self.artifact_workspace = ArtifactWorkspace(
+            artifact_workspace_dir
+            or str(memory_base / "artifacts")
+        )
+        self.artifact_manager = ArtifactManager(
+            self.artifact_workspace,
+            approver=artifact_approver,
+            audit_path=str(memory_base / "artifact_audit.jsonl"),
+        )
+        if enable_artifact_tools:
+            self.tools.register_many(
+                create_artifact_tools(self.artifact_manager)
+            )
         self.orchestrator: OrchestratorAgent = orchestrator or OrchestratorAgent(
             planner=self.planner,
             executor=self.executor,
@@ -824,6 +851,17 @@ class AfnanAgent:
         """The SubAgentManager: create and supervise
         least-privilege subagents for complex goals."""
         return self.subagent_manager
+
+    # -- artifact system ------------------------------------------
+    def get_artifact_manager(self):
+        """The ArtifactManager: versioned, verified
+        deliverables (documents, reports, data, ...)."""
+        return self.artifact_manager
+
+    def set_artifact_approver(self, approver) -> None:
+        """Set the human approver for destructive artifact
+        operations (None restores fail-safe refusal)."""
+        self.artifact_manager.set_approver(approver)
 
     def _build_subagent_loop(
         self, spec, scoped_tools, context_text, checkpointer=None
