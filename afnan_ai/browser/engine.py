@@ -220,6 +220,38 @@ class BrowserEngineAdapter(ABC):
         """Capture the page as PNG bytes."""
         self._unsupported("screenshots")
 
+    # -- computer-use primitives --------------------------------------
+    # Coordinate-level input for the perception layer's visual
+    # fallback and hover/drag actions.  Safe defaults keep simple
+    # adapters valid; real adapters override them.
+    def element_box(
+        self, handle: Any, element: Any
+    ) -> dict[str, Any] | None:
+        """Bounding box {x, y, width, height} of an element."""
+        self._unsupported("element bounding boxes")
+
+    def mouse_click(
+        self, handle: Any, x: float, y: float, click_count: int = 1
+    ) -> None:
+        self._unsupported("coordinate clicking")
+
+    def mouse_move(self, handle: Any, x: float, y: float) -> None:
+        self._unsupported("mouse movement")
+
+    def mouse_drag(
+        self, handle: Any, x1: float, y1: float, x2: float, y2: float
+    ) -> None:
+        self._unsupported("mouse dragging")
+
+    def focus_element(
+        self, handle: Any, element: Any, timeout_ms: int
+    ) -> None:
+        self._unsupported("focusing elements")
+
+    def set_checked(
+        self, handle: Any, element: Any, checked: bool, timeout_ms: int
+    ) -> None:
+        self._unsupported("checking elements")
 
     # -- runtime health & capabilities ------------------------------
 
