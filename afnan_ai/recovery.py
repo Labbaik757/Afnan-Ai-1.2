@@ -47,6 +47,7 @@ from typing import Any
 
 from afnan_ai.log_config import get_logger
 from afnan_ai.planner import Planner, PlanningError, TaskPlan
+from afnan_ai.redaction import redact_arguments
 from afnan_ai.state import AgentState
 
 
@@ -289,7 +290,7 @@ class RecoveryManager:
             "Previous attempt that did not work: "
             f"step {record.failed_step_id!r} used tool "
             f"{record.tool_name!r} with arguments "
-            f"{json.dumps(record.arguments, ensure_ascii=False, default=str)}",
+            f"{json.dumps(redact_arguments(record.arguments), ensure_ascii=False, default=str)}",
         ]
         if completed:
             lines.append(

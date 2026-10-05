@@ -59,6 +59,18 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+
+def _redacted_plan_dict(plan: TaskPlan) -> dict[str, Any]:
+    """A plan as stored in AgentState: structure kept, step
+    arguments passed through the redactor so a plan that types a
+    password never writes the secret into the record."""
+    data = plan.to_dict()
+    for step in data.get("steps", []):
+        if isinstance(step, dict) and "arguments" in step:
+            step["arguments"] = redact_arguments(step["arguments"])
+    return redact_value(data)
+
+
 from afnan_ai.executor import (
     ExecutionReport,
     Executor,
@@ -67,6 +79,7 @@ from afnan_ai.executor import (
 from afnan_ai.log_config import get_logger
 from afnan_ai.planner import Planner, PlanningError, TaskPlan
 from afnan_ai.recovery import RecoveryError, RecoveryManager
+from afnan_ai.redaction import redact_arguments, redact_value
 from afnan_ai.state import AgentState, TaskStatus
 from afnan_ai.verifier import (
     VerificationReport,
@@ -302,7 +315,7 @@ class Agent:
             )
 
         result.plan = plan
-        task_state.metadata["plan"] = plan.to_dict()
+        task_state.metadata["plan"] = _redacted_plan_dict(plan)
         task_state.add_observation(
             f"Agent generated plan {plan.plan_id} with "
             f"{len(plan.steps)} step(s) for goal: {goal}",
@@ -472,7 +485,7 @@ class Agent:
                     recovery_error = e.to_dict()
                 else:
                     current_plan = new_plan
-                    task_state.metadata["current_plan"] = new_plan.to_dict()
+                    task_state.metadata["current_plan"] = _redacted_plan_dict(new_plan)
                     task_state.add_observation(
                         f"Agent switching to recovery plan "
                         f"{new_plan.plan_id} ({len(new_plan.steps)} "

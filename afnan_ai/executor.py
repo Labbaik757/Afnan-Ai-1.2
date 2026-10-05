@@ -44,6 +44,7 @@ from enum import Enum
 from typing import Any
 
 from afnan_ai.planner import PlanStep, TaskPlan
+from afnan_ai.redaction import redact_arguments
 from afnan_ai.state import AgentState, TaskStatus
 from afnan_ai.tools.base import (
     ToolError,
@@ -416,7 +417,7 @@ class Executor:
             metadata={
                 "description": step.description,
                 "tool_name": step.tool_name,
-                "arguments": result.arguments,
+                "arguments": redact_arguments(result.arguments),
                 "expected_result": step.expected_result,
                 "plan_id": plan_id,
             },

@@ -34,6 +34,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from afnan_ai.redaction import redact_text, redact_value
+
 
 def _now_iso() -> str:
     """Current UTC time as an ISO-8601 string (timezone aware)."""
@@ -327,11 +329,14 @@ class AgentState:
         error: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> ToolResult:
+        # Records are secrets-safe: outputs/errors are redacted
+        # before they land in state (and therefore in summaries,
+        # planner prompts and anything serialized from here).
         result = ToolResult(
             tool=str(tool),
             success=bool(success),
-            output=output,
-            error=error,
+            output=redact_value(output),
+            error=redact_text(error) if error else None,
             metadata=dict(metadata or {}),
         )
         self.tool_results.append(result)
