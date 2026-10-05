@@ -95,6 +95,7 @@ class AfnanAgent:
         challenge_handler=None,
         checkpoint_dir=None,
         browser_runtime_dir=None,
+        memory_dir=None,
         screen_observer: ScreenObserver | None = None,
         enable_screen_tools: bool = True,
     ):
@@ -228,6 +229,33 @@ class AfnanAgent:
             if checkpoint_dir
             else None
         )
+        # Persistent memory / goals / task queue: long-term
+        # state that survives tasks (verified facts, user
+        # preferences, managed goals, long-running tasks).
+        # Files are created lazily under the memory directory;
+        # memory content is safety-gated (no secrets, trusted
+        # sources only) inside the stores themselves.
+        from pathlib import Path as _Path
+
+        from afnan_ai.goal_manager import GoalManager
+        from afnan_ai.memory_store import LocalMemoryStore
+        from afnan_ai.task_manager import TaskManager
+
+        memory_base = (
+            _Path(str(memory_dir)).expanduser()
+            if memory_dir
+            else _Path.home() / ".afnan-ai"
+        )
+        self.memory_store = LocalMemoryStore(
+            str(memory_base / "memory.json")
+        )
+        self.goal_manager = GoalManager(
+            str(memory_base / "goals.json")
+        )
+        self.task_manager = TaskManager(
+            str(memory_base / "tasks.json")
+        )
+        self._task_worker = None
         self.orchestrator: OrchestratorAgent = orchestrator or OrchestratorAgent(
             planner=self.planner,
             executor=self.executor,
@@ -610,18 +638,21 @@ class AfnanAgent:
     def get_agent_loop(self):
         """The real-time AgentLoop driving this agent's
         Planner/Executor/Verifier/Recovery with fresh browser
-        observations."""
+        observations, long-term memory and active goals."""
         if self._agent_loop is None:
             from afnan_ai.agent_loop import AgentLoop
 
             self._agent_loop = AgentLoop(
                 self.orchestrator,
                 observation_provider=self._loop_observation,
+                memory_store=self.memory_store,
+                goal_manager=self.goal_manager,
             )
         return self._agent_loop
 
     def run_agent_loop(self, goal, *, state=None, resume_from=None,
-                       control=None, on_event=None, **limit_kwargs):
+                       control=None, on_event=None, goal_id=None,
+                       **limit_kwargs):
         """Run *goal* through the real-time autonomous loop:
         observe → decide (small batch) → validate → execute →
         fresh observation → verify → continue/replan/complete.
@@ -640,7 +671,47 @@ class AfnanAgent:
             resume_from=resume_from,
             control=control,
             on_event=on_event,
+            goal_id=goal_id,
         )
+
+    # -- persistent memory / goals / tasks --------------------------
+    def get_memory_store(self):
+        """The persistent MemoryStore (verified facts, user
+        preferences, task summaries — secrets are refused)."""
+        return self.memory_store
+
+    def get_goal_manager(self):
+        """The persistent GoalManager (long-lived goals with
+        milestones, dependencies and verified progress)."""
+        return self.goal_manager
+
+    def get_task_manager(self):
+        """The persistent TaskManager (long-running task
+        queue)."""
+        return self.task_manager
+
+    def _run_managed_task(self, task, resume_from):
+        """TaskWorker runner: a managed task through the loop."""
+        return self.run_agent_loop(
+            task.goal_text,
+            resume_from=resume_from,
+            goal_id=task.goal_id or None,
+            max_duration_s=task.timeout_s,
+        )
+
+    def get_task_worker(self):
+        """The explicitly-invoked TaskWorker over the task
+        queue (runs tasks through the AgentLoop; starts no
+        background execution by itself)."""
+        if self._task_worker is None:
+            from afnan_ai.task_manager import TaskWorker
+
+            self._task_worker = TaskWorker(
+                self.task_manager,
+                self._run_managed_task,
+                checkpointer=self.checkpointer,
+            )
+        return self._task_worker
 
     # Alias in goal vocabulary
     run_goal = run_task

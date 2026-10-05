@@ -252,12 +252,18 @@ class AgentLoop:
             [AgentState], dict[str, Any] | None
         ] | None = None,
         on_event: Callable[[LoopEvent], None] | None = None,
+        memory_store: Any = None,
+        goal_manager: Any = None,
     ):
         self.agent = agent
         self.observation_provider = observation_provider
         self.on_event = on_event
+        self.memory_store = memory_store
+        self.goal_manager = goal_manager
         self.events: list[LoopEvent] = []
         self.trajectory: list[dict[str, Any]] = []
+        self._run_memories: list[str] = []
+        self._run_goals: list[dict[str, Any]] = []
 
     # -- public API ----------------------------------------------------
     def run(
@@ -269,6 +275,7 @@ class AgentLoop:
         resume_from: dict[str, Any] | None = None,
         control: LoopControl | None = None,
         on_event: Callable[[LoopEvent], None] | None = None,
+        goal_id: str | None = None,
     ) -> OrchestrationResult:
         """Run *goal* through the real-time loop.
 
@@ -320,6 +327,33 @@ class AgentLoop:
         self.trajectory = list(
             task_state.metadata.get("trajectory") or []
         )
+        # Long-term context for this run: relevant verified
+        # memories + active goals.  Memory problems must never
+        # break the loop.
+        self._run_memories = []
+        self._run_goals = []
+        if self.memory_store is not None:
+            try:
+                for record in self.memory_store.search(goal, limit=3):
+                    # Defense in depth: a stored memory that
+                    # somehow contains instruction-like text is
+                    # never fed to the Planner as context.
+                    if scan_for_injection(record.content):
+                        continue
+                    self._run_memories.append(record.content)
+            except Exception:
+                self._run_memories = []
+        if self.goal_manager is not None:
+            try:
+                self._run_goals = [
+                    {
+                        "description": g.description,
+                        "progress": g.progress,
+                    }
+                    for g in self.goal_manager.active_goals()[:3]
+                ]
+            except Exception:
+                self._run_goals = []
         event_sink = on_event or self.on_event
         task_state.add_observation(
             f"Agent received goal (agent loop): {goal}",
@@ -992,6 +1026,14 @@ class AgentLoop:
             f"Agent finished (agent loop): {result.summary()}",
             source="agent",
         )
+        self._after_run(
+            goal=goal,
+            goal_id=goal_id,
+            outcome=outcome,
+            task_state=task_state,
+            verifications=verifications,
+            failure_error=failure_error,
+        )
         agent._save_checkpoint(task_state, last_plan, result)
         task_state.metadata["trajectory"] = self.trajectory[-300:]
         task_state.metadata["loop"] = {
@@ -1006,6 +1048,59 @@ class AgentLoop:
         return result
 
     # -- internals -------------------------------------------------------
+    def _after_run(
+        self,
+        *,
+        goal: str,
+        goal_id: str | None,
+        outcome: OrchestrationStatus,
+        task_state: AgentState,
+        verifications: list,
+        failure_error: dict[str, Any] | None,
+    ) -> None:
+        """Promote verified outcomes to long-term memory and
+        goal progress.  Best-effort: persistence problems never
+        change the task's outcome."""
+        verified_names = [
+            v.step_id for v in verifications
+            if v.status == VerificationStatus.VERIFIED
+        ]
+        if outcome == OrchestrationStatus.COMPLETED:
+            if self.memory_store is not None:
+                try:
+                    self.memory_store.add(
+                        f"Task completed: {goal} "
+                        f"({len(verified_names)} verified "
+                        f"step(s): {', '.join(verified_names[:5])})",
+                        kind="task_summary",
+                        source="verified_result",
+                        confidence=min(
+                            0.95, 0.5 + 0.1 * len(verified_names)
+                        ),
+                        key=f"task-summary:{goal[:60]}",
+                        metadata={"task_id": task_state.task_id},
+                    )
+                except Exception:
+                    pass
+        if self.goal_manager is not None and goal_id:
+            try:
+                self.goal_manager.link_task(
+                    goal_id, task_state.task_id
+                )
+                self.goal_manager.record_task_result(
+                    goal_id,
+                    outcome == OrchestrationStatus.COMPLETED,
+                    (
+                        f"{goal}: {len(verified_names)} verified "
+                        "step(s)"
+                        if outcome == OrchestrationStatus.COMPLETED
+                        else f"{goal}: "
+                        f"{(failure_error or {}).get('message', 'failed')}"
+                    ),
+                )
+            except Exception:
+                pass
+
     def _finish_early(self, result, task_state, agent, error, sink):
         """First-call planning failure (same contract as before)."""
         agent._save_checkpoint(task_state, None, result)
@@ -1149,6 +1244,23 @@ class AgentLoop:
         data (never instructions).
         """
         lines = [f"\n[Agent loop cycle {cycle}] Goal: {goal}"]
+        if self._run_memories:
+            lines.append(
+                "Relevant long-term memory (trusted facts from "
+                "the user / verified results): "
+                + "; ".join(
+                    m[:160] for m in self._run_memories
+                )
+            )
+        if self._run_goals:
+            lines.append(
+                "Active goals this work serves: "
+                + "; ".join(
+                    f"{g['description'][:80]} "
+                    f"(progress {g['progress']:.0%})"
+                    for g in self._run_goals
+                )
+            )
         completed = [s.name for s in state.completed_steps][-10:]
         if completed:
             lines.append(
