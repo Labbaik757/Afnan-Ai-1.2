@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from afnan_ai.browser.base import BrowserErrorCode, BrowserException
+from afnan_ai.redaction import redact_text
 
 #: Browser names the controller accepts (mapped by the backend)
 SUPPORTED_BROWSERS = ("chromium", "chrome", "edge", "firefox", "webkit")
@@ -179,6 +180,15 @@ class BrowserBackend(ABC):
         """
         return []
 
+    def dialogs(self, handle: Any) -> list[dict[str, Any]]:
+        """Dialogs (alert/confirm/prompt) the page raised.
+
+        Observation only: the driver records and dismisses them
+        so a page can never hang the agent; the controller only
+        reports what happened.
+        """
+        return []
+
     def create_profile_context(
         self, name: str, options: dict[str, Any]
     ) -> str:
@@ -248,6 +258,7 @@ class PlaywrightBackend(BrowserBackend):
         self._active_profile: str = "default"
         # per-page network events, keyed by page object id
         self._network: dict[int, list[dict[str, Any]]] = {}
+        self._dialogs: dict[int, list[dict[str, Any]]] = {}
 
     # -- lifecycle ------------------------------------------------------
     def start(self, browser: str, headless: bool) -> None:
@@ -318,6 +329,7 @@ class PlaywrightBackend(BrowserBackend):
         self._contexts = {}
         self._active_profile = "default"
         self._network = {}
+        self._dialogs = {}
 
     @staticmethod
     def _import_playwright():
@@ -349,7 +361,39 @@ class PlaywrightBackend(BrowserBackend):
         except Exception:
             pass
         self._track_network(page)
+        self._track_dialogs(page)
         return page
+
+    def _track_dialogs(self, page: Any) -> None:
+        """Record dialogs and dismiss them — a page must never
+        hang the agent waiting on an alert nobody can see.  The
+        dialog text is redacted; nothing is ever auto-confirmed
+        (dismiss is the safe default for confirm/prompt too)."""
+        seen: list[dict[str, Any]] = []
+        self._dialogs[id(page)] = seen
+
+        def on_dialog(dialog: Any) -> None:
+            try:
+                seen.append({
+                    "type": getattr(dialog, "type", "alert"),
+                    "message": redact_text(
+                        str(getattr(dialog, "message", "") or "")
+                    )[:200],
+                    "action": "dismissed",
+                })
+            finally:
+                try:
+                    dialog.dismiss()
+                except Exception:
+                    pass
+
+        try:
+            page.on("dialog", on_dialog)
+        except Exception:
+            pass
+
+    def dialogs(self, handle: Any) -> list[dict[str, Any]]:
+        return [dict(d) for d in self._dialogs.get(id(handle), [])]
 
     # -- network awareness (observation only) ---------------------------
 
@@ -639,6 +683,30 @@ class PlaywrightBackend(BrowserBackend):
             raise self._driver_error(e, "read page text") from e
 
     def accessibility_snapshot(self, handle: Any) -> Any:
+        """The page's accessibility tree via the modern ARIA API.
+
+        Uses ``page.aria_snapshot()`` (current Playwright) and
+        parses its YAML into the normalized tree shape; the
+        deprecated ``page.accessibility`` API is only a fallback
+        for very old Playwright versions, and a driver with
+        neither raises a structured error so the controller can
+        fall back to the DOM.
+        """
+        aria_text = None
+        try:
+            aria_text = handle.aria_snapshot()
+        except AttributeError:
+            aria_text = None
+        except Exception as e:
+            raise self._driver_error(
+                e, "accessibility snapshot"
+            ) from e
+        if aria_text:
+            from afnan_ai.browser.accessibility import (
+                parse_aria_snapshot,
+            )
+
+            return parse_aria_snapshot(aria_text)
         try:
             accessibility = handle.accessibility
         except AttributeError as e:

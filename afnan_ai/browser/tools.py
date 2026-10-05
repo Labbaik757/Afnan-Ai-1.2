@@ -23,7 +23,6 @@ from afnan_ai.browser.controller import BrowserController
 from afnan_ai.browser.extraction import clean_document
 from afnan_ai.browser.pagination import Paginator
 from afnan_ai.browser.research import WebResearch
-from afnan_ai.browser.semantics import rank as rank_matches
 from afnan_ai.tools.base import Tool, ToolExecutionError
 
 
@@ -772,35 +771,12 @@ class BrowserFindSemanticTool(_BrowserTool):
     }
 
     def run(self, arguments: dict[str, Any]) -> Any:
-        tree = self._call(
-            self.controller.accessibility_tree,
+        return self._call(
+            self.controller.find_semantic,
+            arguments["description"],
             tab_id=arguments.get("tab_id"),
+            limit=int(arguments.get("limit", 5)),
         )
-        ranked = rank_matches(arguments["description"], tree["nodes"])
-        limit = int(arguments.get("limit", 5))
-        matches = []
-        for match in ranked[:limit]:
-            entry = dict(match)
-            if entry["tier"] == "low":
-                # never hand out an actionable handle for a guess
-                entry["element_ref"] = None
-            matches.append(entry)
-        best = matches[0] if matches else None
-        uncertain = bool(best and best["tier"] != "actionable")
-        return {
-            "description": arguments["description"],
-            "matches": matches,
-            "best_confidence": best["confidence"] if best else 0.0,
-            "uncertain": uncertain,
-            "note": (
-                "Low-confidence matches have no element_ref and "
-                "must not be acted on automatically; verify or "
-                "ask first."
-                if uncertain else
-                "Top match is confident enough to act on via its "
-                "element_ref or locator."
-            ),
-        }
 
 
 class BrowserExtractContentTool(_BrowserTool):
