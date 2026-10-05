@@ -1470,6 +1470,77 @@ function(value) {
             )
         return base64.b64decode(str(data))
 
+    # -- computer-use primitives (CDP Input/DOM) --------------------------
+    def element_box(
+        self, handle: Any, element: Any
+    ) -> dict[str, Any] | None:
+        box = self._call_on(
+            element,
+            "function() { const r = this.getBoundingClientRect();"
+            " return {x: r.x, y: r.y, width: r.width,"
+            " height: r.height}; }",
+        )
+        return box if isinstance(box, dict) else None
+
+    def _dispatch_mouse(
+        self, handle: Any, event_type: str, x: float, y: float,
+        *, click_count: int = 0,
+    ) -> None:
+        state = self._page_state(handle)
+        params: dict[str, Any] = {
+            "type": event_type,
+            "x": float(x), "y": float(y), "button": "left",
+        }
+        if click_count:
+            params["clickCount"] = int(click_count)
+        self._cdp(
+            state, "Input.dispatchMouseEvent", params,
+            session_id=handle.session_id,
+        )
+
+    def mouse_click(
+        self, handle: Any, x: float, y: float, click_count: int = 1
+    ) -> None:
+        count = max(1, int(click_count))
+        self._dispatch_mouse(
+            handle, "mousePressed", x, y, click_count=count
+        )
+        self._dispatch_mouse(
+            handle, "mouseReleased", x, y, click_count=count
+        )
+        self._pump_events(self._page_state(handle))
+
+    def mouse_move(self, handle: Any, x: float, y: float) -> None:
+        self._dispatch_mouse(handle, "mouseMoved", x, y)
+
+    def mouse_drag(
+        self, handle: Any, x1: float, y1: float, x2: float, y2: float
+    ) -> None:
+        self._dispatch_mouse(handle, "mouseMoved", x1, y1)
+        self._dispatch_mouse(handle, "mousePressed", x1, y1, click_count=1)
+        self._dispatch_mouse(handle, "mouseMoved", x2, y2)
+        self._dispatch_mouse(handle, "mouseReleased", x2, y2, click_count=1)
+
+    def focus_element(
+        self, handle: Any, element: Any, timeout_ms: int
+    ) -> None:
+        self._call_on(element, "function() { this.focus(); }")
+
+    def set_checked(
+        self, handle: Any, element: Any, checked: bool, timeout_ms: int
+    ) -> None:
+        changed = self._call_on(
+            element,
+            "function(want) { if (this.checked !== want) {"
+            " this.click(); } return this.checked === want; }",
+            [bool(checked)],
+        )
+        if not changed:
+            raise BrowserException(
+                "Could not set the element's checked state",
+                code=BrowserErrorCode.OPERATION_FAILED,
+            )
+
     def wait_for(
         self, handle: Any, spec: dict[str, Any], timeout_ms: int
     ) -> None:
