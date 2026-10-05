@@ -1,5 +1,6 @@
 """Afnan AI — cross-platform voice assistant package."""
 
+from afnan_ai.browser import BrowserController
 from afnan_ai.config import AgentConfig
 from afnan_ai.executor import ExecutionReport, Executor
 from afnan_ai.llm import LLMProvider, OllamaProvider
@@ -16,6 +17,7 @@ __all__ = [
     "Agent",
     "AgentConfig",
     "AgentState",
+    "BrowserController",
     "ExecutionReport",
     "Executor",
     "LLMProvider",

@@ -20,6 +20,7 @@ import webbrowser
 from pathlib import Path
 
 from afnan_ai import speech as _speech
+from afnan_ai.browser import BrowserController, register_browser_tools
 from afnan_ai.config import AgentConfig
 from afnan_ai.executor import ExecutionReport, Executor
 from afnan_ai.llm import LLMProvider, get_default_provider
@@ -77,6 +78,8 @@ class AfnanAgent:
         max_iterations: int | None = None,
         max_recovery_attempts: int | None = None,
         config: AgentConfig | None = None,
+        browser_controller: BrowserController | None = None,
+        enable_browser_tools: bool = True,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -87,6 +90,16 @@ class AfnanAgent:
             self.adapter,
             screenshot_capture=self._capture_screenshot,
         )
+        # Browser control (Phase 2): a BrowserController bound to
+        # browser Tools in the same registry, so the Planner/Agent
+        # can launch, navigate and read pages like any other
+        # capability.  Constructing it launches nothing; the
+        # browser starts only when a browser tool runs.
+        self.browser: BrowserController = (
+            browser_controller or BrowserController()
+        )
+        if enable_browser_tools:
+            register_browser_tools(self.tools, self.browser)
         # The agent talks to a model only through the LLMProvider
         # interface.  By default that is the local Ollama provider
         # (llama3), exactly as before; pass any other provider
@@ -743,6 +756,8 @@ def create_agent(
     max_iterations: int | None = None,
     max_recovery_attempts: int | None = None,
     config: AgentConfig | None = None,
+    browser_controller: BrowserController | None = None,
+    enable_browser_tools: bool = True,
 ) -> AfnanAgent:
     return AfnanAgent(
         adapter=adapter,
@@ -756,4 +771,6 @@ def create_agent(
         max_iterations=max_iterations,
         max_recovery_attempts=max_recovery_attempts,
         config=config,
+        browser_controller=browser_controller,
+        enable_browser_tools=enable_browser_tools,
     )

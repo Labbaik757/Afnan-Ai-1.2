@@ -150,6 +150,13 @@ def get_recovery():
     return _agent.recovery
 
 
+def get_browser_controller():
+    """Return the BrowserController whose operations are exposed
+    as browser_* tools in the registry (browser launches only
+    when such a tool runs)."""
+    return _agent.browser
+
+
 def listen_command(timeout=5, phrase_time=6):
     return _agent.listen_command(timeout=timeout, phrase_time=phrase_time)
 
