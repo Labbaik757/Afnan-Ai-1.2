@@ -513,6 +513,13 @@ def main() -> int:
     else:
         print("OK: AgentLoop stays skills-agnostic (learner injected)")
 
+    # ---- Multi-agent / subagents -------------------------------------
+    # Subagents reuse the existing loop against scoped tool
+    # views.  The package must stay free of browser/computer/
+    # driver coupling (skills models/risk imports are fine —
+    # subagent code lives under the skill sandbox rules), must
+    # never import the agent loop at module level (lazy use
+    # only), and the AgentLoop itself must never import it.
     try:
         from afnan_ai.skills import (
             Skill, SkillRegistry, SkillTool, compose_skill,
@@ -532,6 +539,64 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001 - report, don't crash
         failures.append(f"skills smoke check crashed: {e}")
         print(f"FAIL: skills smoke check crashed: {e}")
+
+    subagents_dir = ROOT / "afnan_ai" / "subagents"
+    subagents_coupling = []
+    for path in sorted(subagents_dir.glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        tree = _ast.parse(source)
+        top_imports = []
+        for node in tree.body:
+            if isinstance(node, _ast.Import):
+                top_imports.extend(a.name for a in node.names)
+            elif isinstance(node, _ast.ImportFrom):
+                top_imports.append(node.module or "")
+        for imported in top_imports:
+            for bad in ("afnan_ai.browser", "afnan_ai.computer",
+                        "afnan_ai.connectors", "afnan_ai.agent_loop",
+                        "playwright"):
+                if bad in imported:
+                    subagents_coupling.append(
+                        f"{path.name}:{imported}"
+                    )
+        for bad in ("sys.platform", "startfile"):
+            if bad in source:
+                subagents_coupling.append(f"{path.name}:{bad}")
+    if subagents_coupling:
+        failures.append(
+            f"subagents layer coupling: {subagents_coupling}"
+        )
+        print(
+            f"FAIL: subagents layer coupling: {subagents_coupling}"
+        )
+    else:
+        print("OK: subagents layer is decoupled (no browser/computer/connector/loop imports)")
+
+    if "afnan_ai.subagents" in loop_source:
+        failures.append("agent_loop imports the subagents package")
+        print(
+            "FAIL: agent_loop.py references afnan_ai.subagents"
+        )
+    else:
+        print("OK: AgentLoop stays subagents-agnostic")
+
+    try:
+        from afnan_ai.subagents import (
+            SubAgentManager, SubAgentSpec, ScopedToolRegistry,
+            TaskDecomposer,
+        )
+        from afnan_ai.tools.registry import ToolRegistry as _TR
+        _tools = _TR()
+        _spec = SubAgentSpec(
+            subagent_id="guard", role="researcher",
+            objective="compat guard probe",
+            allowed_tools=[],
+        )
+        assert _spec.subagent_id == "guard"
+        print("OK: subagents package imports cleanly")
+    except Exception as e:  # noqa: BLE001 - report, don't crash
+        failures.append(f"subagents smoke check crashed: {e}")
+        print(f"FAIL: subagents smoke check crashed: {e}")
 
     try:
         from afnan_ai.context import (

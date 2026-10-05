@@ -268,6 +268,11 @@ def set_skill_approver(approver) -> None:
     return _agent.set_skill_approver(approver)
 
 
+def get_subagent_manager():
+    """Return the SubAgentManager for multi-agent tasks."""
+    return _agent.get_subagent_manager()
+
+
 def get_memory_store():
     """Return the persistent MemoryStore (verified facts,
     preferences, task summaries; secrets are refused)."""
