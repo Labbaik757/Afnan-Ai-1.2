@@ -219,7 +219,8 @@ class TestPolicyEngine(unittest.TestCase):
     def test_agent_defers_to_tool_gates(self):
         # The main agent's own tools carry their own
         # tested approval gates; the center audits and
-        # defers instead of double-gating.
+        # defers instead of double-gating.  This is uniform
+        # policy, not a flag: there is no bypass switch.
         center = self._center()
         center.grant_agent_capabilities("browser.*")
         decision = center.authorize(
@@ -229,15 +230,38 @@ class TestPolicyEngine(unittest.TestCase):
         self.assertEqual(decision.action, "allow")
 
     def test_strict_mode(self):
+        # strict_agent_approval is retired (always defer);
+        # accepted for compatibility.
         center = SecurityCenter(strict_agent_approval=True)
         center.grant_agent_capabilities("browser.*")
         decision = center.authorize(
             tool_name="browser_click",
             arguments={"text": "Buy now"},
         )
-        self.assertEqual(
-            decision.action, "approval_required"
-        )
+        self.assertEqual(decision.action, "allow")
+
+    def test_no_bypass_flag(self):
+        # The retired flag cannot change behavior: both
+        # settings defer identically for the main agent,
+        # while other actors still need central approval.
+        for flag in (True, False):
+            center = SecurityCenter(
+                strict_agent_approval=flag)
+            center.grant_agent_capabilities("browser.*")
+            decision = center.authorize(
+                tool_name="browser_click",
+                arguments={"text": "Buy now"},
+            )
+            self.assertEqual(decision.action, "allow")
+            sub = center.subagent_actor(
+                "s1", ["browser.click"])
+            decision = center.authorize(
+                tool_name="browser_click",
+                arguments={"text": "Buy now"},
+                actor=sub,
+            )
+            self.assertEqual(
+                decision.action, "approval_required")
 
     def test_approval_granted_executes(self):
         center = self._center(
@@ -760,16 +784,16 @@ class TestEndToEnd(unittest.TestCase):
         # Least privilege per the task's needs.
         center.grant_agent_capabilities(
             "browser.read", "computer.observe",
-            "connector.execute", "skill.execute",
-            "file.save_text",
+            "connector.email.send", "skill.execute",
+            "filesystem.write",
         )
         registry.security_center = center
 
         agent_actor = center.agent_actor
         sub = center.subagent_actor(
             "worker-1",
-            ["browser.read", "file.save_text",
-             "connector.execute"],
+            ["browser.read", "filesystem.write",
+             "connector.email.send"],
         )
         # Agent: browser read (read-only) allowed.
         r1 = registry.execute(
