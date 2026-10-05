@@ -257,6 +257,7 @@ class AgentLoop:
         system_context_provider: Callable[[], str | None] | None = None,
         context_manager_factory: Callable[[], Any] | None = None,
         trajectory_store: Any | None = None,
+        skill_learner: Any | None = None,
     ):
         self.agent = agent
         self.observation_provider = observation_provider
@@ -277,6 +278,10 @@ class AgentLoop:
         # second orchestration layer.
         self._context_factory = context_manager_factory
         self._trajectory_store = trajectory_store
+        # Skill learning is fed from finished runs (verified
+        # workflows become candidates, never live skills); the
+        # loop never imports the skills package.
+        self._skill_learner = skill_learner
         self._ctx: Any | None = None
         self._ctx_task_id: str | None = None
         self._run_goal = ""
@@ -1124,6 +1129,10 @@ class AgentLoop:
                 )
             except Exception:
                 pass
+        # Skill learning: verified successful workflows become
+        # candidates (never live skills — promotion stays
+        # explicit and audited).
+        self._feed_skill_learner(executed, verifications, outcome)
         result.events = [e.to_dict() for e in self.events]
         result.trajectory = list(self.trajectory)
         return result
@@ -1618,6 +1627,47 @@ class AgentLoop:
             return ctx.recovery_brief()
         except Exception:
             return ""
+
+    def _feed_skill_learner(
+        self, executed, verifications, outcome
+    ) -> None:
+        """Offer a finished run to the skill learner.
+
+        Best-effort: learning never changes the run's
+        outcome.  The learner only counts verified steps of
+        completed tasks; everything else is ignored there.
+        """
+        learner = getattr(self, "_skill_learner", None)
+        if learner is None:
+            return
+        try:
+            verified_ids = {
+                v.step_id
+                for v in verifications
+                if getattr(
+                    getattr(v, "status", None), "value",
+                    getattr(v, "status", ""),
+                )
+                == "verified"
+            }
+            steps = [
+                {
+                    "tool": e.tool_name,
+                    "verified": e.step_id in verified_ids,
+                }
+                for e in executed
+            ]
+            learner.observe_task(
+                self._ctx_task_id or "",
+                steps,
+                outcome=(
+                    outcome.value
+                    if hasattr(outcome, "value")
+                    else str(outcome)
+                ),
+            )
+        except Exception:
+            pass
 
     def _sync_context_metadata(self, task_state) -> None:
         """Refresh the context snapshot in task metadata so
