@@ -1387,6 +1387,67 @@ is no new orchestration layer:
   AgentLoop with the scoped registry.  Tests:
   `tests/test_subagents.py` (41 tests).
 
+## Artifact System
+
+`afnan_ai/artifacts/` turns research and task results into
+real, usable deliverables — documents, reports, PDFs,
+spreadsheets, presentations, images, HTML pages, structured
+data and code output — without duplicating the AgentLoop:
+
+    User Goal
+      ↓ Agent / Subagents
+      ↓ Research + Tools + Connectors + Computer
+      ↓ ArtifactManager
+      ↓ Draft / Version
+      ↓ Verifier + Evidence Check
+      ↓ Verified Artifact
+      ↓ Workspace / Export / User
+
+- **Artifact model** — id, name, extensible type, description,
+  source task / project / goal, version, status, file
+  reference, timestamps and verification state
+  (`verified` / `failed` / `uncertain` / `unverified`).
+- **Controlled generation** — `builders.py` turns *data* into
+  bytes (Markdown, sanitized HTML, stdlib-only PDF, CSV,
+  JSON, text, slide decks, PNG charts).  The agent never gets
+  direct filesystem or code execution to make artifacts;
+  every write is secret-redacted first.
+- **ArtifactManager** — create / read / update / version /
+  rename / duplicate / export / archive / delete, with
+  atomic writes, SHA-256 checksums, and per-artifact locks.
+  Parallel subagents share the manager safely; stale writers
+  get a structured `version_conflict` instead of silent
+  corruption.
+- **Versioning** — every meaningful update creates a new
+  version; previous versions stay readable and traceable; a
+  failed update restores the previous stable version.
+- **Verification** — `ArtifactVerifier` inspects the actual
+  output (exists, checksum, format magic bytes, expected
+  content, required sections, size constraints) and returns
+  `verified`, `failed` or `uncertain`.  Only verified
+  results merge into the final deliverable.
+- **Evidence tracking** — per-claim source references; new
+  sources start unverified and are never auto-marked —
+  model-generated facts stay separate from verified
+  evidence.
+- **Workspace** — per-project homes
+  (`research/`, `drafts/`, `final_reports/`, `supporting/`);
+  artifacts associate with task, project and goal ids.
+- **Security** — secrets redacted on write; destructive
+  operations (delete, sensitive export) follow the existing
+  human-approval rules (no approver → `approval_required`,
+  never silent); external page content is data, never
+  generation instructions.
+- **Background-safe** — incremental `update()` calls plus
+  `checkpoint_ref()` let long-running TaskManager jobs
+  resume after crash/restart; incomplete work is never
+  marked verified.
+- **Agent wiring** — `AfnanAgent.get_artifact_manager()`
+  (plus the `main` delegate); `artifact_*` tools let the
+  normal AgentLoop decide when a deliverable is useful —
+  no second orchestration loop.  Tests:
+  `tests/test_artifacts.py` (26 tests).
+
 ## Autonomous browser workflow
 
 `run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,
