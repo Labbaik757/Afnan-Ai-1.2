@@ -1172,6 +1172,120 @@ class BrowserCapabilitiesTool(_BrowserTool):
         return self._call(self.controller.capabilities)
 
 
+class BrowserPerceiveTool(_BrowserTool):
+    name = "browser_perceive"
+    description = (
+        "Perceive the current page as one unified observation: "
+        "URL, title, visible text, accessibility/DOM/visual "
+        "elements with roles, accessible names, bounding boxes, "
+        "state and confidence, dialogs and loading state. "
+        "Accessibility information is preferred; visual "
+        "detection is the fallback (set include_visual to fuse "
+        "pixels in). Elements carry element_ids for "
+        "browser_computer_act."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "tab_id": {"type": "string"},
+            "max_elements": {"type": "integer"},
+            "include_visual": {"type": "boolean"},
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._call(
+            self.controller.perception.observe,
+            arguments.get("tab_id"),
+            max_elements=int(arguments.get("max_elements") or 50),
+            include_visual=bool(arguments.get("include_visual")),
+        )
+
+
+class BrowserLocateTool(_BrowserTool):
+    name = "browser_locate"
+    description = (
+        "Locate a page element from a natural-language "
+        "description (e.g. 'Login button', 'Search box', "
+        "'Email field'). Returns ranked candidates with "
+        "confidence and source (accessibility/dom/visual). "
+        "Low-confidence candidates carry no element_id, so "
+        "they cannot be acted on automatically."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "description": {"type": "string"},
+            "tab_id": {"type": "string"},
+            "limit": {"type": "integer"},
+        },
+        "required": ["description"],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._call(
+            self.controller.perception.locate,
+            str(arguments.get("description") or ""),
+            tab_id=arguments.get("tab_id"),
+            limit=int(arguments.get("limit") or 5),
+        )
+
+
+class BrowserComputerActTool(_BrowserTool):
+    name = "browser_computer_act"
+    description = (
+        "Perform one computer action on a perceived element "
+        "(element_id from browser_perceive/browser_locate): "
+        "click, double_click, type, clear, select, check, "
+        "uncheck, press_key, hotkey, scroll, mouse_move, drag, "
+        "focus or hover. The target is validated (right tab, "
+        "still exists/visible/enabled) before acting, "
+        "low-confidence targets require human approval, and "
+        "the result always carries a fresh observation plus "
+        "page_changed/verified evidence — action success is "
+        "not task success."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string"},
+            "element_id": {"type": "string"},
+            "tab_id": {"type": "string"},
+            "text": {"type": "string"},
+            "value": {"type": "string"},
+            "key": {"type": "string"},
+            "x": {"type": "number"},
+            "y": {"type": "number"},
+            "dx": {"type": "integer"},
+            "dy": {"type": "integer"},
+            "expect_text": {"type": "string"},
+            "expect_url_contains": {"type": "string"},
+        },
+        "required": ["action"],
+        "additionalProperties": False,
+    }
+
+    def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._call(
+            self.controller.perception.act,
+            str(arguments.get("action") or ""),
+            element_id=arguments.get("element_id"),
+            tab_id=arguments.get("tab_id"),
+            text=arguments.get("text"),
+            value=arguments.get("value"),
+            key=arguments.get("key"),
+            x=arguments.get("x"),
+            y=arguments.get("y"),
+            dx=int(arguments.get("dx") or 0),
+            dy=int(arguments.get("dy") or 0),
+            expect_text=arguments.get("expect_text"),
+            expect_url_contains=arguments.get("expect_url_contains"),
+        )
+
+
 class BrowserRateLimitTool(_BrowserTool):
     name = "browser_rate_limit"
     description = (
@@ -1402,6 +1516,10 @@ def create_browser_tools(
     # the session is reachable from the controller (and thus the
     # agent) for inspection; the tools close over the same one
     controller.research_session = research
+    from afnan_ai.browser.perception import BrowserPerception
+
+    # the unified perception layer (accessibility/DOM/visual)
+    controller.perception = BrowserPerception(controller)
     return [
         BrowserLaunchTool(controller),
         BrowserConnectTool(controller),
@@ -1444,6 +1562,9 @@ def create_browser_tools(
         BrowserProfilesTool(controller),
         BrowserSessionTool(controller),
         BrowserCapabilitiesTool(controller),
+        BrowserPerceiveTool(controller),
+        BrowserLocateTool(controller),
+        BrowserComputerActTool(controller),
     ]
 
 
