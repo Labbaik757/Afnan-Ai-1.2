@@ -943,13 +943,20 @@ class BrowserController:
         logger.info(
             "browser %s on %s (tab %s)", action, info.ref, tab.tab_id
         )
+        # Refresh the element info after the action, but never let
+        # that fail the action itself: a click that navigates the
+        # page detaches the clicked element, so fall back to the
+        # validated pre-action snapshot.
+        element = info.to_dict()
+        record = self._elements.get(info.ref)
+        if record is not None:
+            try:
+                element = self._read_info(tab, record).to_dict()
+            except BrowserException:
+                pass
         return {
             "action": action,
-            "element": self._read_info(
-                tab, self._elements[info.ref]
-            ).to_dict()
-            if info.ref in self._elements
-            else info.to_dict(),
+            "element": element,
             "page": self.current_page(tab.tab_id),
         }
 

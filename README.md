@@ -691,6 +691,42 @@ tests live in `tests/test_browser_tools.py`;
 `tools/check_compatibility.py` verifies the browser tools exist
 and that driver code stays inside `afnan_ai/browser/`.
 
+## Reliability: state-grounded verification + recovery
+
+Browser success is not trusted blindly; it is confirmed against
+the page itself:
+
+- **Post-action confirmation** — `BrowserReliability` (in
+  `afnan_ai/browser/reliability.py`) is wired into the Verifier's
+  generic observation-provider hook. After every `browser_*`
+  step, the Verifier judges the expected result against a fresh
+  `browser_observe_page` snapshot (URL, title, text, elements) —
+  a click that "succeeds" but leaves the page unchanged is
+  **failed/uncertain**, not verified. Non-browser steps are
+  untouched, and the Verifier stays browser-agnostic (enforced
+  by `tools/check_compatibility.py`).
+- **Structured recovery strategies** — on a failed/uncertain
+  browser step, the failure advisor classifies the problem
+  (navigation failure, element-not-found, timeout, stale
+  element, invalid tab, unexpected popup/new tab, page-state
+  mismatch) and records a strategy in AgentState with the
+  verification: relocate from the observed elements (with
+  candidate locators taken from the real page), wait for a
+  condition before acting, re-find after the page changed,
+  adopt/select the popup tab, choose a new route, and so on.
+- **Replanning, never blind repetition** — the advice and the
+  observed page travel with the verification into AgentState,
+  so the existing RecoveryManager/Planner generate an
+  alternative action; a recovery plan that repeats the failed
+  action (same tool + same arguments) is rejected and never
+  executed, and recovery stays within the existing attempt and
+  iteration limits.
+
+End-to-end tests (successful sign-in, failure → recovery →
+completion, blind-repeat rejection, navigation-failure
+recovery, unexpected-popup recovery, dynamic-content wait) live
+in `tests/test_browser_reliability.py`.
+
 # 🏁 Phase 1 Status — Clean, Tested, Cross-Platform
 
 Phase 1 (the core agent architecture) is complete and verified
