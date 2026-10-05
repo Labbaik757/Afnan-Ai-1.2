@@ -176,7 +176,18 @@ class ConfigTests(unittest.TestCase):
     def test_defaults(self):
         config = AgentConfig()
         self.assertEqual(config.stt_language, "ur-PK")
-        self.assertIsNone(config.wakeword_model)
+        # Bundled model is the default when present in repo.
+        import os
+
+        if config.wakeword_model is not None:
+            self.assertTrue(
+                config.wakeword_model.endswith(
+                    ("afnan.json", "afnan.onnx")
+                )
+            )
+            self.assertTrue(
+                os.path.exists(config.wakeword_model)
+            )
         self.assertEqual(config.wakeword_threshold, 0.5)
         self.assertEqual(
             config.tts_urdu_voice, "ur-PK-GulNawazNeural"
@@ -286,13 +297,56 @@ class AgentVoiceWiringTests(unittest.TestCase):
         )
 
     def test_no_detector_without_model(self):
-        agent = self._make_agent()
-        agent.config = AgentConfig(wakeword_model=None)
         from afnan_ai.wakeword import create_detector
 
-        self.assertIsNone(
-            create_detector(agent.config.wakeword_model)
+        # Explicit None → no detector (cloud fallback).
+        self.assertIsNone(create_detector(None))
+
+    def test_bundled_model_detector(self):
+        """Real model: positive clip wakes, noise does not.
+
+        Skipped when numpy is unavailable.
+        """
+        try:
+            import numpy  # noqa: F401
+        except ImportError:
+            self.skipTest("numpy not installed")
+        import os
+
+        from afnan_ai.wakeword import NumpyWakeWordDetector
+
+        model = os.path.join(
+            os.path.dirname(__file__), "..", "afnan_ai",
+            "wakeword_models", "afnan.json",
         )
+        model = os.path.abspath(model)
+        if not os.path.exists(model):
+            self.skipTest("bundled model not present")
+        det = NumpyWakeWordDetector(model)
+        self.assertEqual(det.window_samples, 16000)
+        # silence → 0.0 via energy gate
+        self.assertEqual(
+            det.score(b"\x00" * 2560), 0.0
+        )
+        # bad format rejected
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".json", mode="w", delete=False
+        ) as fh:
+            fh.write('{"format": "nope"}')
+            bad = fh.name
+        with self.assertRaises(RuntimeError):
+            NumpyWakeWordDetector(bad)
+        os.unlink(bad)
+
+    def test_detector_status_numpy(self):
+        from afnan_ai.wakeword import detector_status
+
+        status = detector_status("/tmp/afnan.json")
+        self.assertTrue(status["model_configured"])
+        self.assertFalse(status["model_exists"])
+        self.assertIn("numpy_installed", status)
 
     def test_wait_for_wake_uses_fake_detector(self):
         agent = self._make_agent()
