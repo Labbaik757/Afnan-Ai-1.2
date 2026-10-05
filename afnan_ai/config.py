@@ -18,6 +18,17 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+
+def _bundled_wakeword_model() -> str | None:
+    """Path to the repo-bundled wake-word model, if present."""
+    base = Path(__file__).resolve().parent / "wakeword_models"
+    for name in ("afnan.json", "afnan.onnx"):
+        p = base / name
+        if p.exists():
+            return str(p)
+    return None
 
 
 def _int_from_env(name: str, default: int) -> int:
@@ -50,9 +61,11 @@ class AgentConfig:
     #: Speech-to-text language for Google recognition
     #: ("ur-PK" for Urdu, "en-IN" for English).
     stt_language: str = "ur-PK"
-    #: Path to an on-device wake-word .onnx model (see
-    #: afnan_ai/wakeword.py).  None → cloud fallback loop.
-    wakeword_model: str | None = None
+    #: Path to an on-device wake-word .onnx model.
+    #: Defaults to the bundled model trained on the user's
+    #: own voice (afnan_ai/wakeword_models/afnan.onnx).
+    #: None → cloud fallback loop.
+    wakeword_model: str | None = _bundled_wakeword_model()  # type: ignore[assignment]
     #: Confidence threshold for the on-device wake detector.
     wakeword_threshold: float = 0.5
     #: Neural voice for Urdu TTS (edge-tts, no account).
