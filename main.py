@@ -210,6 +210,24 @@ def run_agent_loop(goal, **kwargs):
     return _agent.run_agent_loop(goal, **kwargs)
 
 
+def get_computer_controller():
+    """Return the ComputerController for validated desktop
+    observation/actions (None when computer tools are
+    disabled)."""
+    return _agent.get_computer_controller()
+
+
+def get_file_service():
+    """Return the safe file-operations service."""
+    return _agent.get_file_service()
+
+
+def set_computer_approver(approver) -> None:
+    """Set the human approver for sensitive desktop/file
+    actions (None restores the fail-safe refusal)."""
+    return _agent.set_computer_approver(approver)
+
+
 def get_memory_store():
     """Return the persistent MemoryStore (verified facts,
     preferences, task summaries; secrets are refused)."""

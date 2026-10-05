@@ -98,6 +98,10 @@ class AfnanAgent:
         memory_dir=None,
         screen_observer: ScreenObserver | None = None,
         enable_screen_tools: bool = True,
+        computer_backend=None,
+        computer_approver=None,
+        enable_computer_tools: bool = True,
+        downloads_dir=None,
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
@@ -162,6 +166,41 @@ class AfnanAgent:
             )
         if enable_screen_tools and self.screen_observer is not None:
             register_screen_tools(self.tools, self.screen_observer)
+        # Computer Use: validated desktop observation/actions
+        # (mouse, keyboard, windows, applications) plus safe
+        # file operations, through the same ToolRegistry.
+        # Sensitive desktop/file actions need a human approver
+        # (fail-safe: without one they do not run).
+        self.computer = None
+        self.file_service = None
+        if enable_computer_tools:
+            from afnan_ai.computer.command_backend import (
+                CommandComputerBackend,
+            )
+            from afnan_ai.computer.controller import (
+                ComputerController,
+            )
+            from afnan_ai.computer.files import FileService
+            from afnan_ai.computer.policy import ComputerApprovalGate
+            from afnan_ai.computer.tools import create_computer_tools
+
+            backend = computer_backend or CommandComputerBackend()
+            gate = ComputerApprovalGate(computer_approver)
+            self.computer = ComputerController(
+                backend,
+                screen_observer=self.screen_observer,
+                gate=gate,
+            )
+            self.file_service = FileService(
+                gate=gate,
+                open_path=self.adapter.open_path,
+                downloads_dirs=(
+                    [downloads_dir] if downloads_dir else None
+                ),
+            )
+            self.tools.register_many(
+                create_computer_tools(self.computer, self.file_service)
+            )
         # The perception layer's visual fallback uses the same
         # ScreenObserver as the screen tools (one observer, one
         # set of visual refs).
@@ -362,6 +401,8 @@ class AfnanAgent:
             return self.browser_reliability.observe_state(step)
         if tool_name.startswith("screen_") and self.screen_observer:
             return self.screen_observer.verifier_observation(step)
+        if tool_name.startswith("computer_") and self.computer:
+            return self.computer.verifier_observation(step)
         return None
         return self.tools.get_or_none(name)
 
@@ -683,6 +724,23 @@ class AfnanAgent:
             on_event=on_event,
             goal_id=goal_id,
         )
+
+    # -- computer use -------------------------------------------------
+    def get_computer_controller(self):
+        """The ComputerController for validated desktop
+        observation and actions (None when disabled)."""
+        return self.computer
+
+    def get_file_service(self):
+        """The safe file-operations service (destructive
+        operations need human approval)."""
+        return self.file_service
+
+    def set_computer_approver(self, approver) -> None:
+        """Set the human approver for sensitive desktop/file
+        actions (None restores the fail-safe refusal)."""
+        if self.computer is not None:
+            self.computer.gate.set_approver(approver)
 
     # -- persistent memory / goals / tasks --------------------------
     def get_memory_store(self):
