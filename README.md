@@ -727,6 +727,35 @@ completion, blind-repeat rejection, navigation-failure
 recovery, unexpected-popup recovery, dynamic-content wait) live
 in `tests/test_browser_reliability.py`.
 
+## Autonomous browser workflow
+
+`run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,
+backed by `afnan_ai/browser/workflow.py`) runs one complex
+browser goal end to end on the existing pipeline — no layer
+gained a second job:
+
+* before acting, the browser is briefed into the task state
+  (open tabs with purposes, current page, active profile,
+  network health), so the Planner works from what the browser
+  actually looks like;
+* every action is executed through the ToolRegistry and
+  re-verified against a fresh observation — a click that
+  changed nothing is never counted as success;
+* failures and uncertain states go to the RecoveryManager with
+  the full state (completed work is not redone, failed actions
+  are never blindly repeated, sensitive actions still pass the
+  human approval gate);
+* step, recovery and now also wall-clock limits
+  (`max_iterations`, `max_duration_s`) bound the run;
+* the final answer is composed from recorded evidence —
+  search results, extracted page text, verified steps and
+  downloads — not from what the actions merely claimed.
+
+End-to-end scenarios live in `tests/test_browser_workflow.py`
+(search → open → extract, multi-tab comparison, form login,
+pagination, downloads, dynamic SPA pages, limits, recovery,
+profile/session continuity).
+
 ## Operations: network, checkpoints, rate limits, profiles
 
 - **Network awareness**: pages report their request health
