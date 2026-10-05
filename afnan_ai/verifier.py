@@ -313,6 +313,34 @@ def _state_contradicts(state: AgentState | None, step: PlanStep) -> bool:
     )
 
 
+def _observation_tokens(observation: Any) -> set[str]:
+    """Tokenize an observation (any JSON-ish state snapshot)."""
+    if observation is None:
+        return set()
+    if isinstance(observation, (dict, list)):
+        text = json.dumps(observation, ensure_ascii=False, default=str)
+    else:
+        text = str(observation)
+    return set(_tokens(text))
+
+
+def _observation_summary(observation: Any) -> dict[str, Any]:
+    """Small, safe summary of an observation for evidence records."""
+    if not isinstance(observation, dict):
+        return {}
+    summary = {}
+    for key in ("url", "title", "tab_id", "page_changed"):
+        if observation.get(key) is not None:
+            summary[key] = _safe(observation[key])
+    elements = observation.get("elements")
+    if isinstance(elements, list):
+        summary["element_count"] = len(elements)
+    tabs = observation.get("tabs")
+    if isinstance(tabs, list):
+        summary["tab_count"] = len(tabs)
+    return summary
+
+
 # ----------------------------------------------------------------------
 # Verifier
 # ----------------------------------------------------------------------
@@ -324,13 +352,59 @@ class Verifier:
     Holds no ToolRegistry and no LLM — by construction it cannot
     execute or re-run a tool, plan a task, or dispatch work.  Pass
     a default ``state`` to record into, or pass one per call.
+
+    Two optional, generic hooks keep it domain-agnostic:
+
+    * ``observation_provider(step)`` returns a fresh observation
+      of the world (any JSON-ish snapshot, e.g. the current web
+      page) or None.  When present, the observed state — not the
+      action's own report — is the ground truth for judging.
+    * ``failure_advisor(step, result, observation)`` returns
+      structured recovery advice for a failed/uncertain verdict,
+      attached to the result so replanning can act on it.
     """
 
     #: keyword overlap at/above this is needed to call a step verified
     VERIFIED_THRESHOLD = 0.75
 
-    def __init__(self, state: AgentState | None = None):
+    def __init__(
+        self,
+        state: AgentState | None = None,
+        *,
+        observation_provider=None,
+        failure_advisor=None,
+    ):
         self.state = state
+        self.observation_provider = observation_provider
+        self.failure_advisor = failure_advisor
+
+    def _fetch_observation(self, step: PlanStep) -> Any:
+        if self.observation_provider is None:
+            return None
+        try:
+            return self.observation_provider(step)
+        except Exception:
+            return None
+
+    def _advise(
+        self,
+        step: PlanStep,
+        result: VerificationResult,
+        observation: Any,
+    ) -> None:
+        if self.failure_advisor is None:
+            return
+        try:
+            advice = self.failure_advisor(step, result, observation)
+        except Exception:
+            advice = None
+        if isinstance(advice, dict) and advice:
+            result.evidence["recovery_advice"] = _safe(advice)
+            guidance = advice.get("advice")
+            if guidance:
+                result.reason = (
+                    f"{result.reason} Recovery guidance: {guidance}"
+                )
 
     # -- single step --------------------------------------------------
     def verify_step(
@@ -346,7 +420,21 @@ class Verifier:
         if actual is None:
             actual = _state_evidence(effective_state, step)
 
-        result = self._judge(step, actual, effective_state)
+        # Fresh observed state (when a provider is wired) is the
+        # ground truth; fetch it before judging so failed verdicts
+        # can carry it to the failure advisor too.
+        observation = None
+        if actual is not None and actual.success is not False:
+            observation = self._fetch_observation(step)
+
+        result = self._judge(step, actual, effective_state, observation)
+        if (
+            result.status is not VerificationStatus.VERIFIED
+            and actual is not None
+        ):
+            if observation is None:
+                observation = self._fetch_observation(step)
+            self._advise(step, result, observation)
         if record and effective_state is not None:
             self._record(effective_state, result)
         return result
@@ -401,6 +489,7 @@ class Verifier:
         step: PlanStep,
         actual: _Actual | None,
         state: AgentState | None,
+        observation: Any = None,
     ) -> VerificationResult:
         def make(status, reason, confidence, evidence=None, output=None):
             merged = {"source": actual.source if actual else "none"}
@@ -495,6 +584,16 @@ class Verifier:
                         {"execution_success": True, "contradicting_flag": flag},
                     )
 
+        # Fresh observed state beats the action's own report: if
+        # the world observably matches (or clearly does not match)
+        # the expected result, that decides the verdict.
+        if observation is not None:
+            verdict = self._observation_verdict(
+                step, expected, observation, make
+            )
+            if verdict is not None:
+                return verdict
+
         keywords = _keywords(expected)
         if not keywords:
             return make(
@@ -550,6 +649,54 @@ class Verifier:
             0.4 + ratio / 2,
             evidence,
         )
+
+    def _observation_verdict(
+        self, step: PlanStep, expected: str, observation: Any, make
+    ) -> VerificationResult | None:
+        """Judge against freshly observed state; None = not
+        decisive, fall back to the action's own report."""
+        keywords = _keywords(expected)
+        if not keywords:
+            return None
+        observed = _observation_tokens(observation)
+        if not observed:
+            return None
+        matched = [k for k in keywords if k in observed]
+        missing = [k for k in keywords if k not in observed]
+        ratio = len(matched) / len(keywords)
+        evidence = {
+            "execution_success": True,
+            "observation": _observation_summary(observation),
+            "keywords": keywords,
+            "observation_matched": matched,
+            "observation_missing": missing,
+            "observation_match_ratio": round(ratio, 3),
+        }
+        if ratio >= self.VERIFIED_THRESHOLD:
+            return make(
+                VerificationStatus.VERIFIED,
+                f"Observed state confirms {expected!r} "
+                f"(matched {matched} in the current state)",
+                max(0.8, ratio),
+                evidence,
+            )
+        if ratio == 0:
+            summary = _observation_summary(observation)
+            where = (
+                f"url={summary.get('url')!r}, title={summary.get('title')!r}"
+                if summary
+                else "the observed state"
+            )
+            return make(
+                VerificationStatus.FAILED,
+                f"Observed state does not confirm {expected!r}: "
+                f"none of {keywords} appear in the current state "
+                f"({where}); the action's success report is not "
+                f"enough",
+                0.85,
+                evidence,
+            )
+        return None
 
     @staticmethod
     def _app_contradiction(step: PlanStep, actual: _Actual) -> str | None:

@@ -157,6 +157,13 @@ def get_browser_controller():
     return _agent.browser
 
 
+def get_browser_reliability():
+    """Return the BrowserReliability layer (page observations +
+    recovery advice feeding the Verifier), or None when browser
+    tools are disabled."""
+    return _agent.browser_reliability
+
+
 def listen_command(timeout=5, phrase_time=6):
     return _agent.listen_command(timeout=timeout, phrase_time=phrase_time)
 

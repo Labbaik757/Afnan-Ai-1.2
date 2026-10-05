@@ -21,6 +21,7 @@ from pathlib import Path
 
 from afnan_ai import speech as _speech
 from afnan_ai.browser import BrowserController, register_browser_tools
+from afnan_ai.browser.reliability import BrowserReliability
 from afnan_ai.config import AgentConfig
 from afnan_ai.executor import ExecutionReport, Executor
 from afnan_ai.llm import LLMProvider, get_default_provider
@@ -113,9 +114,29 @@ class AfnanAgent:
         # Executor runs a TaskPlan's steps through the same registry,
         # recording every result in AgentState
         self.executor: Executor = executor or Executor(self.tools)
+        # Browser reliability: fresh post-action page observations
+        # (confirmation against actual page state) plus structured
+        # recovery advice for browser failures.  It only feeds the
+        # Verifier's generic provider hooks — browser details stay
+        # inside afnan_ai/browser, the Verifier stays generic.
+        self.browser_reliability: BrowserReliability | None = (
+            BrowserReliability(self.browser) if enable_browser_tools else None
+        )
         # Verifier judges executed steps against their expected
-        # results — it analyzes results/state, never re-executes
-        self.verifier: Verifier = verifier or Verifier()
+        # results — it analyzes results/state, never re-executes.
+        # For browser steps it also sees the actual page state.
+        self.verifier: Verifier = verifier or Verifier(
+            observation_provider=(
+                self.browser_reliability.observe_state
+                if self.browser_reliability
+                else None
+            ),
+            failure_advisor=(
+                self.browser_reliability.advise
+                if self.browser_reliability
+                else None
+            ),
+        )
         # Central orchestration layer: the Agent that connects
         # AgentState + Planner + Executor + Verifier and manages a
         # complete task lifecycle (goal → plan → step-by-step

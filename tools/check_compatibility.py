@@ -106,6 +106,18 @@ def main() -> int:
     else:
         print("OK: verifier never executes tools")
 
+    # ---- Verifier must stay browser-agnostic ------------------------------
+    # Browser knowledge lives in afnan_ai/browser (BrowserReliability);
+    # the Verifier only sees generic observation/advisor callables.
+    verifier_source = (
+        ROOT / "afnan_ai" / "verifier.py"
+    ).read_text(encoding="utf-8")
+    if "afnan_ai.browser" in verifier_source or "BrowserController" in verifier_source:
+        failures.append("verifier imports browser code")
+        print("FAIL: verifier.py references browser code — it must stay browser-agnostic")
+    else:
+        print("OK: verifier stays browser-agnostic (browser details live in afnan_ai/browser)")
+
     # The central Agent orchestrator must drive tools only through
     # the Executor — it must never reach the ToolRegistry, a tool,
     # or the platform adapter directly.

@@ -26,12 +26,14 @@ from afnan_ai.browser.base import (
     TabInfo,
 )
 from afnan_ai.browser.controller import BrowserController
+from afnan_ai.browser.reliability import BrowserReliability
 from afnan_ai.browser.tools import create_browser_tools, register_browser_tools
 
 __all__ = [
     "SUPPORTED_BROWSERS",
     "BrowserBackend",
     "BrowserController",
+    "BrowserReliability",
     "BrowserError",
     "BrowserErrorCode",
     "BrowserException",
