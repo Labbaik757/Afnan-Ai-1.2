@@ -1072,6 +1072,92 @@ the same layering as the browser stack:
   `enable_computer_tools=False`; inject a backend with
   `computer_backend=`.  Tests: `tests/test_computer_use.py`.
 
+## Connector System: external services (Muse-style)
+
+`afnan_ai/connectors/` lets the agent work with external
+services — email, calendar, cloud storage, Slack-style chat,
+Notion-style project management, Canva-style design tools,
+GitHub, CRM/business tools — through one generic,
+extensible foundation.  No real third-party integration is
+hard-coded: adding a service means subclassing `Connector`
+and registering it; core agent code never changes.
+
+    User Goal
+      ↓ AgentLoop
+      ↓ Available Tools + Connectors
+      ↓ Planner / Decision
+      ↓ Permission & Risk Validation
+      ↓ Connector Operation
+      ↓ Result Observation
+      ↓ Verifier
+      ↓ Memory / Goal Update
+      ↓ Next Action / Completion
+
+- **Connector interface** (`base.py`): unique id, name,
+  description, `AuthType` (none / api_key / oauth2 / session),
+  declared scopes and `OperationSpec`s (name, description,
+  risk level, required scopes, parameter schema).  Lifecycle:
+  `authenticate` → `connect` → `refresh_session` →
+  `health_check` → `disconnect`, plus one generic
+  `execute_operation`.  Connector implementations stay
+  completely separate from the core agent.
+- **ConnectorRegistry** (`registry.py`): dynamic
+  register/unregister/discover (installed distributions can
+  contribute connectors via the `afnan_ai.connectors`
+  entry-point group — best-effort, never breaks startup).
+  `capabilities_schema()` gives the Planner/AgentLoop the
+  structured schema (operations, risk levels, scopes,
+  parameter schemas); unknown connectors and unsupported
+  operations are structured errors.
+- **Authentication & secrets** (`auth.py`,
+  `credentials.py`): OAuth2/API-key/session live inside the
+  abstraction.  Secrets live *only* in a `CredentialStore`
+  (in-memory default, env-var reader, or a real vault you
+  plug in) — never in `AgentState`, `MemoryStore`, planner
+  output, checkpoints or logs.  Credentials are provided via
+  `service.provide_credentials()` (secure Python channel,
+  never tool arguments); connectors receive them transiently
+  in the per-call `OperationContext`.  Expired sessions are
+  refreshed once, transparently, then retried once.
+- **Permission model** (`policy.py`): every operation is
+  risk-classified — `read`, `low_risk_write`,
+  `sensitive_write`, `irreversible_destructive`.  Scopes are
+  least-privilege: an operation runs only when its required
+  scopes were explicitly granted
+  (`service.grant_scopes()`).  Sensitive/irreversible
+  operations run only with explicit human approval through
+  the fail-safe `ConnectorApprovalGate`
+  (`agent.set_connector_approver()`; without an approver they
+  are refused, never defaulted).  A `RiskPolicy` can block a
+  risk level entirely.
+- **Reliability** (`service.py`, `errors.py`): timeouts,
+  rate limits, expired auth, permission denied, network
+  failures, malformed responses and outages become
+  structured `ConnectorError`s with a `retryable` hint.  The
+  existing RecoveryManager handles replanning; failed
+  operations are never blindly repeated (the service makes
+  exactly one attempt per call, plus one refresh-retry).
+- **Audit trail** (`audit.py`): every operation records
+  connector, operation, risk, timestamp, approval status,
+  execution result and verification result — redacted — to
+  memory and `<memory_dir>/connector_audit.jsonl`.
+- **Agent integration**: six `connector_*` tools
+  (`list/capabilities/connect/disconnect/health_check/execute`)
+  in the same ToolRegistry; the AgentLoop's decision context
+  gains a compact connector section via a generic
+  `system_context_provider` hook (no connector-specific
+  orchestration in the loop); the Verifier gets fresh safe
+  connector observations.  AgentState stores only safe
+  metadata (connector, operation, status, redacted summary,
+  timestamps, verification status).  A multi-step workflow —
+  read email → identify info → create calendar event (human
+  approval if required) → verify — runs through the normal
+  AgentLoop flow.  Disable with
+  `enable_connector_tools=False`; inject a registry with
+  `connector_registry=`.  Tests:
+  `tests/test_connectors.py` (44 tests, mock email/calendar/
+  flaky connectors — no external services needed).
+
 ## Autonomous browser workflow
 
 `run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,
