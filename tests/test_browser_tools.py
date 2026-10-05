@@ -24,17 +24,25 @@ from tests.test_browser_controller import FakeBrowserBackend
 
 EXPECTED_TOOLS = [
     "browser_back",
+    "browser_clear",
+    "browser_click",
     "browser_close_tab",
     "browser_connect",
     "browser_current_page",
+    "browser_find_elements",
     "browser_forward",
+    "browser_inspect_element",
     "browser_launch",
     "browser_list_tabs",
     "browser_navigate",
     "browser_new_tab",
+    "browser_press_key",
     "browser_reload",
+    "browser_scroll",
+    "browser_select_option",
     "browser_select_tab",
     "browser_shutdown",
+    "browser_type",
 ]
 
 

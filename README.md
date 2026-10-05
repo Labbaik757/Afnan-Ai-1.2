@@ -630,10 +630,24 @@ works the same on Windows, macOS and Linux:
   ToolRegistry by default, so the Planner can plan browser tasks
   and the Executor runs them like any other capability.  Disable
   with `AfnanAgent(..., enable_browser_tools=False)`.
+- **Page interaction tools** — `browser_find_elements` (inspect
+  elements: identity `ref` + tag/text/attributes/visible/enabled),
+  `browser_inspect_element`, `browser_click`, `browser_type`,
+  `browser_clear`, `browser_select_option`, `browser_press_key`,
+  and `browser_scroll` (page scroll or scroll-element-into-view).
+  Targets are either a `ref` from `browser_find_elements` or a
+  locator: stable **selector / test id first**, with accessibility
+  fallbacks (**role + name**, label, placeholder, visible text).
+  Every interaction validates its target first — element must
+  exist, be current (a ref from before the last navigation is a
+  `stale_element` error; find it again), visible, enabled, and of
+  the right kind (typing only into editable fields, options only
+  on `<select>`) — so an action never lands on the wrong element.
 - **Structured errors only** — browser unavailable (install with
   `pip install playwright` + `playwright install chromium`),
-  connection failed, browser not started, invalid tab and
-  navigation failures all come back as
+  connection failed, browser not started, invalid tab,
+  navigation failures, `element_not_found`, `invalid_element`,
+  `stale_element` and `timeout` all come back as
   ``ToolResult(success=False)`` with the browser error code in
   `error.details["browser_error"]["code"]`; nothing crashes and
   nothing silently "succeeds".
@@ -643,10 +657,16 @@ agent.execute_tool("browser_launch", {})
 agent.execute_tool("browser_navigate", {"url": "https://example.com"})
 page = agent.execute_tool("browser_current_page", {})
 page.output  # {"tab_id": "tab_1", "url": "https://example.com/", "title": "Example Domain"}
+found = agent.execute_tool("browser_find_elements", {"role": "button", "name": "Sign in"})
+agent.execute_tool("browser_click", {"ref": found.output["elements"][0]["ref"]})
+agent.execute_tool("browser_type", {"selector": "#username", "text": "afnan"})
 ```
 
 Unit tests (fake in-memory backend) live in
-`tests/test_browser_controller.py`; registry/Agent integration
+`tests/test_browser_controller.py`; interaction tests (login-form
+DOM: successful interactions, element-not-found, stale/invalid
+element, timeout and execution-failure cases) live in
+`tests/test_browser_interactions.py`; registry/Agent integration
 tests live in `tests/test_browser_tools.py`;
 `tools/check_compatibility.py` verifies the browser tools exist
 and that driver code stays inside `afnan_ai/browser/`.
