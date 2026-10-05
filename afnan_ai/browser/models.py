@@ -152,7 +152,14 @@ class BrowserPage:
 
 @dataclass
 class BrowserElement:
-    """One interactive element (mirrors controller ElementInfo)."""
+    """One interactive element (mirrors controller ElementInfo).
+
+    The unified perception element: whichever source found it
+    (accessibility tree, DOM or visual detection), it carries
+    the same identity — role, accessible name, bounding box,
+    visibility/enabled state, a confidence score and its
+    source — so the agent never works with raw engine objects.
+    """
 
     ref: str
     tag: str = ""
@@ -161,6 +168,13 @@ class BrowserElement:
     enabled: bool = True
     editable: bool = False
     value: str = ""
+    role: str = ""
+    accessible_name: str = ""
+    confidence: float = 1.0
+    source: str = "dom"  # accessibility | dom | visual
+    bbox: dict[str, Any] | None = None
+    tab_id: str = ""
+    frame: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -171,6 +185,13 @@ class BrowserElement:
             "enabled": self.enabled,
             "editable": self.editable,
             "value": self.value,
+            "role": self.role,
+            "accessible_name": redact_text(self.accessible_name)[:200],
+            "confidence": round(float(self.confidence), 3),
+            "source": self.source,
+            "bbox": dict(self.bbox) if self.bbox else None,
+            "tab_id": self.tab_id,
+            "frame": self.frame,
         }
 
 

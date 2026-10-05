@@ -710,6 +710,62 @@ class PlaywrightAdapter(BrowserEngineAdapter):
         except Exception as e:
             raise self._driver_error(e, "take a screenshot") from e
 
+    # -- computer-use primitives (Playwright mouse/DOM) ----------------
+    def element_box(
+        self, handle: Any, element: Any
+    ) -> dict[str, Any] | None:
+        try:
+            box = element.bounding_box()
+        except Exception as e:
+            raise self._driver_error(e, "read element bounds") from e
+        if not box:
+            return None
+        return {
+            "x": float(box["x"]), "y": float(box["y"]),
+            "width": float(box["width"]), "height": float(box["height"]),
+        }
+
+    def mouse_click(
+        self, handle: Any, x: float, y: float, click_count: int = 1
+    ) -> None:
+        try:
+            handle.mouse.click(x, y, click_count=max(1, int(click_count)))
+        except Exception as e:
+            raise self._driver_error(e, "click at coordinates") from e
+
+    def mouse_move(self, handle: Any, x: float, y: float) -> None:
+        try:
+            handle.mouse.move(x, y)
+        except Exception as e:
+            raise self._driver_error(e, "move the mouse") from e
+
+    def mouse_drag(
+        self, handle: Any, x1: float, y1: float, x2: float, y2: float
+    ) -> None:
+        try:
+            handle.mouse.move(x1, y1)
+            handle.mouse.down()
+            handle.mouse.move(x2, y2)
+            handle.mouse.up()
+        except Exception as e:
+            raise self._driver_error(e, "drag the mouse") from e
+
+    def focus_element(
+        self, handle: Any, element: Any, timeout_ms: int
+    ) -> None:
+        try:
+            element.focus(timeout=timeout_ms)
+        except Exception as e:
+            raise self._driver_error(e, "focus element") from e
+
+    def set_checked(
+        self, handle: Any, element: Any, checked: bool, timeout_ms: int
+    ) -> None:
+        try:
+            element.set_checked(bool(checked), timeout=timeout_ms)
+        except Exception as e:
+            raise self._driver_error(e, "set element checked state") from e
+
     @staticmethod
     def _driver_error(e: Exception, context: str) -> BrowserException:
         """Map a raw Playwright failure to a structured error."""
