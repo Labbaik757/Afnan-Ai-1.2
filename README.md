@@ -1303,6 +1303,90 @@ from arbitrary model-generated code:
   injection and lists skills in its decision context.
   Tests: `tests/test_skill_builder.py` (49 tests).
 
+## Multi-agent / subagents
+
+`afnan_ai/subagents/` divides complex goals into
+specialized, least-privilege subagents — each one runs the
+*existing* AgentLoop against a scoped tool view, so there
+is no new orchestration layer:
+
+    User Goal
+      ↓ Central Agent
+      ↓ Task Decomposition
+      ↓ Subagent Manager
+      ├── Research Agent
+      ├── Browser Agent
+      ├── Computer Agent
+      ├── Data/File Agent
+      └── Verification Agent
+      ↓ Controlled Results
+      ↓ Central Verification
+      ↓ Merge Results
+      ↓ Goal Completion
+
+- **SubAgentSpec** (`models.py`) — subagent_id, role,
+  objective, allowed tools/connectors, context scope, risk
+  permissions, status, result, verification state, plus
+  `ResourceLimits` (max steps, timeout, tool-call budget,
+  retry limit, context budget).  Roles
+  (`researcher`, `browser_agent`, `computer_agent`,
+  `data_analyst`, `file_agent`, `verifier_agent`,
+  `planner_agent`) are permission bundles, never hard-coded
+  workflows.
+- **SubAgentManager** (`manager.py`) — create/start/pause/
+  resume/cancel/terminate; each subagent gets an isolated
+  AgentState and the minimal context (objective, relevant
+  memory, constraints) — never the parent's full state.
+  Independent subagents run in parallel threads;
+  `depends_on` gives topological levels, and a failed
+  dependency fails its dependents fast with a structured
+  reason.  Results return as structured handoffs that the
+  parent verifies instead of trusting; retries are bounded
+  and never blindly repeat a failed strategy.
+- **ScopedToolRegistry** (`scoped_registry.py`) —
+  read-only least-privilege view: exact/`prefix_*` tool
+  allow-listing, risk-permission checks on every call,
+  per-connector filtering for `connector_execute`,
+  tool-call budgets, and no registration.
+- **ResourceLockManager** (`locks.py`) — named exclusive
+  locks (`browser:tab:<id>`, `file:<path>`,
+  `connector:<id>`) so parallel subagents cannot corrupt
+  shared state; acquisition times out with a structured
+  `resource_conflict` instead of deadlocking.
+- **TaskDecomposer** (`decomposition.py`) —
+  `should_decompose()` decides single vs multi-agent;
+  `decompose()` maps goal phases to role specs with
+  dependency ordering (researchers in parallel → verifier
+  → document agent); `decompose_plan()` splits an existing
+  plan by tool domain.
+- **HandoffVerifier** (`handoff.py`) — checks output
+  presence, evidence, confidence, contradictions and
+  injection markers; marks handoffs verified/failed/
+  uncertain.  Only verified handoffs merge.
+- **SubAgentMailbox** (`communication.py`) —
+  parent-mediated messaging only; no direct or hidden
+  channels; payloads are injection-scanned and audited.
+- **SubAgentSecurity** (`security.py`) — creation-time
+  validation: permissions never exceed the parent's
+  (unknown tools/connectors and risk escalation rejected),
+  objectives/constraints scanned for injection, scoped
+  minimal context with UNTRUSTED-DATA labeling, no
+  credential sharing, generated code stays under the Skill
+  Builder sandbox rules.
+- **Approval flow** — a subagent can never approve
+  independently: approval pauses surface as
+  `waiting_for_approval`, and the parent resolves via
+  `resolve_approval()` (Subagent → Parent → Human →
+  resume from checkpoint).
+- **Audit** — `get_execution_graph()` keeps the full
+  parent→subagents→actions→results tree; every lifecycle
+  event lands in a JSONL audit trail.
+- **Agent wiring** — `AfnanAgent.get_subagent_manager()`
+  (plus the `main` delegate); `_build_subagent_loop()`
+  reuses Planner/Executor/Verifier/RecoveryManager/
+  AgentLoop with the scoped registry.  Tests:
+  `tests/test_subagents.py` (41 tests).
+
 ## Autonomous browser workflow
 
 `run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,
