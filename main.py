@@ -232,6 +232,29 @@ def get_task_worker():
     return _agent.get_task_worker()
 
 
+def get_scheduler():
+    """Return the persistent TaskScheduler (one-time +
+    recurring; fires into the task queue)."""
+    return _agent.get_scheduler()
+
+
+def get_background_runner():
+    """Return the BackgroundTaskRunner (runs nothing until
+    start_background_runner is called)."""
+    return _agent.get_background_runner()
+
+
+def start_background_runner():
+    """Start background execution explicitly (crash recovery,
+    approval gates, limits and retries stay enforced)."""
+    return _agent.start_background_runner()
+
+
+def stop_background_runner():
+    """Stop background execution cleanly."""
+    return _agent.stop_background_runner()
+
+
 def get_recovery():
     """Return the RecoveryManager used by the orchestrator
     (replans after failed/uncertain steps, attempts recorded

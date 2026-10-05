@@ -239,6 +239,7 @@ class AfnanAgent:
 
         from afnan_ai.goal_manager import GoalManager
         from afnan_ai.memory_store import LocalMemoryStore
+        from afnan_ai.scheduler import TaskScheduler
         from afnan_ai.task_manager import TaskManager
 
         memory_base = (
@@ -255,7 +256,11 @@ class AfnanAgent:
         self.task_manager = TaskManager(
             str(memory_base / "tasks.json")
         )
+        self.scheduler = TaskScheduler(
+            str(memory_base / "schedules.json"), self.task_manager
+        )
         self._task_worker = None
+        self._background_runner = None
         self.orchestrator: OrchestratorAgent = orchestrator or OrchestratorAgent(
             planner=self.planner,
             executor=self.executor,
@@ -640,15 +645,20 @@ class AfnanAgent:
         Planner/Executor/Verifier/Recovery with fresh browser
         observations, long-term memory and active goals."""
         if self._agent_loop is None:
-            from afnan_ai.agent_loop import AgentLoop
-
-            self._agent_loop = AgentLoop(
-                self.orchestrator,
-                observation_provider=self._loop_observation,
-                memory_store=self.memory_store,
-                goal_manager=self.goal_manager,
-            )
+            self._agent_loop = self._build_agent_loop()
         return self._agent_loop
+
+    def _build_agent_loop(self):
+        """A fresh AgentLoop (background tasks each get their
+        own so concurrent runs stay isolated)."""
+        from afnan_ai.agent_loop import AgentLoop
+
+        return AgentLoop(
+            self.orchestrator,
+            observation_provider=self._loop_observation,
+            memory_store=self.memory_store,
+            goal_manager=self.goal_manager,
+        )
 
     def run_agent_loop(self, goal, *, state=None, resume_from=None,
                        control=None, on_event=None, goal_id=None,
@@ -691,12 +701,23 @@ class AfnanAgent:
         return self.task_manager
 
     def _run_managed_task(self, task, resume_from):
-        """TaskWorker runner: a managed task through the loop."""
-        return self.run_agent_loop(
+        """Managed-task runner: a fresh AgentLoop per task
+        (isolation), with the task's timeout/step budget."""
+        from afnan_ai.agent_loop import LoopLimits
+
+        limit_kwargs: dict = {}
+        if task.timeout_s is not None:
+            limit_kwargs["max_duration_s"] = task.timeout_s
+        if task.metadata.get("max_steps"):
+            limit_kwargs["max_steps"] = int(
+                task.metadata["max_steps"]
+            )
+        limits = LoopLimits(**limit_kwargs) if limit_kwargs else None
+        return self._build_agent_loop().run(
             task.goal_text,
+            limits=limits,
             resume_from=resume_from,
             goal_id=task.goal_id or None,
-            max_duration_s=task.timeout_s,
         )
 
     def get_task_worker(self):
@@ -712,6 +733,49 @@ class AfnanAgent:
                 checkpointer=self.checkpointer,
             )
         return self._task_worker
+
+    # -- scheduling + background execution --------------------------
+    def get_scheduler(self):
+        """The persistent TaskScheduler (one-time + recurring
+        tasks; fires into the TaskManager queue)."""
+        return self.scheduler
+
+    def get_background_runner(self):
+        """The BackgroundTaskRunner over the task queue +
+        scheduler.  Nothing runs until start_background_runner
+        is called explicitly."""
+        if self._background_runner is None:
+            from afnan_ai.background_runner import (
+                AuditLog,
+                BackgroundTaskRunner,
+            )
+
+            audit_path = (
+                self.memory_store._store.path.parent
+                / "audit.jsonl"
+            )
+            self._background_runner = BackgroundTaskRunner(
+                self.task_manager,
+                self._run_managed_task,
+                scheduler=self.scheduler,
+                checkpointer=self.checkpointer,
+                audit_log=AuditLog(str(audit_path)),
+            )
+        return self._background_runner
+
+    def start_background_runner(self):
+        """Start background execution (explicit opt-in).
+
+        Crashed tasks recover from their checkpoints; approval
+        gates, limits and retries all stay enforced."""
+        runner = self.get_background_runner()
+        runner.start()
+        return runner
+
+    def stop_background_runner(self):
+        """Stop background execution cleanly."""
+        if self._background_runner is not None:
+            self._background_runner.stop()
 
     # Alias in goal vocabulary
     run_goal = run_task
