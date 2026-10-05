@@ -888,6 +888,63 @@ the full action set, stale/wrong-tab refusal, confidence
 gating with and without approval, visual fallback, multi-tab
 safety, tool-level workflows and AgentState recording).
 
+## Real-time autonomous AgentLoop
+
+Long tasks are not executed as one static plan.  The
+`AgentLoop` (`afnan_ai/agent_loop.py`) runs a continuous
+cycle on top of the existing Planner/Executor/Verifier/
+RecoveryManager:
+
+```
+Observe → Decide (next action / small batch) → Validate →
+Execute → Fresh Observation → Verify → Continue / Replan /
+Recover / Ask Human → Completion
+```
+
+- Every cycle re-observes (the browser perception layer when
+  a browser page is available) and the Planner sees a compact
+  decision context: the goal, verified-completed work (never
+  repeated), recent failures, the previous action/result, the
+  current page/tab — with page content explicitly labelled
+  *untrusted data*.  Batch remainders are discarded after each
+  batch; a changed environment is always re-decided from
+  fresh state.
+- Actions are validated before execution (unknown tools are
+  rejected structurally), sensitive actions run only through
+  the existing approval gate — an approval refusal *pauses*
+  the task (checkpointed, resumable) instead of burning
+  recovery attempts.
+- Completion requires verified evidence: the Planner
+  reporting "done" with zero verified steps is rejected, and
+  a second evidence-free claim ends the task as
+  `completion_without_evidence`, never as success.
+- No-progress detection (unchanged observation + no new
+  verified work), identical-action limits and repeated-error
+  handling force replans and then a safe stop; limits cover
+  steps, time, LLM calls, replans, recovery attempts,
+  identical actions and browser actions.
+- Prompt-injection defense: instruction-like text in webpage/
+  document/search content is recorded as a structured security
+  observation (and a `security_warning` event) and never
+  followed.
+- Checkpoints are written during the loop;
+  `run_agent_loop(goal, resume_from=checkpoint)` restores the
+  state and never re-executes verified steps.  A
+  `LoopControl` (pause/stop flags) plus structured progress
+  events (`task_started`, `observation_received`,
+  `decision_created`, `action_*`, `verification_completed`,
+  `recovery_started`, `replan_started`, `approval_required`,
+  `checkpoint_created`, `task_completed/failed/paused`) form
+  the foundation for a future background worker + Activity
+  UI.  The full redacted trajectory (goal → observation →
+  decision → action → result → verification) is kept in
+  AgentState.
+
+Entry points: `agent.run_agent_loop(...)` /
+`main.run_agent_loop(...)`, `agent.get_agent_loop()`;
+`Orchestrator.run_loop` delegates to the same loop.  Tests:
+`tests/test_agent_loop.py`.
+
 ## Autonomous browser workflow
 
 `run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,
