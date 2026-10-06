@@ -82,7 +82,18 @@ REMOTE CLIENT -> AUTHENTICATE -> AUTHORIZE -> SEND COMMAND
    The plane registers the device (`trust: pending`) and returns a
    one-time 6-digit code (shown once; only its hash is stored).
 2. The user verifies the request out-of-band and approves it
-   (owner action).
+   (owner action) — on the PC itself, via the owner-only endpoints
+   below or the `approve_pairing` CLI:
+   - `GET /v1/owner/pairings` — list pending requests
+   - `POST /v1/owner/pairings/approve` — `{"pairing_id": ...}`
+   - `POST /v1/owner/pairings/deny` — `{"pairing_id": ...}`
+
+   Owner endpoints require the owner token (a high-entropy bearer
+   secret the server mints into `<control-dir>/owner_token`, mode
+   0600, on first start) **and** a loopback client address — they
+   are refused from any other host even over TLS.  Pairing requests
+   live in the running server's memory, so approval always goes
+   through these endpoints, never a second `ControlPlane` instance.
 3. The device calls `POST /v1/pair/redeem` with the code.  On success
    the device becomes `paired`, receives the least-privilege
    monitoring capability set, and gets a session + bearer token.

@@ -28,6 +28,7 @@ class ControlPlaneServer:
         tls_cert: str | None = None,
         tls_key: str | None = None,
         allow_insecure: bool = False,
+        owner_token_path: str | None = None,
     ) -> None:
         self.plane = plane
         self.transport = ControlTransport(
@@ -37,6 +38,7 @@ class ControlPlaneServer:
             tls_cert=tls_cert,
             tls_key=tls_key,
             allow_insecure=allow_insecure,
+            owner_token_path=owner_token_path,
         )
 
     @classmethod
@@ -50,6 +52,7 @@ class ControlPlaneServer:
         tls_key: str | None = None,
         allow_insecure: bool = False,
         device_path: str | None = None,
+        owner_token_path: str | None = None,
     ) -> "ControlPlaneServer":
         """Build a server from a live AfnanAgent.
 
@@ -81,6 +84,13 @@ class ControlPlaneServer:
             computer_runtime=computer,
             device_path=device_path,
         )
+        if owner_token_path is None and device_path:
+            from pathlib import Path
+
+            owner_token_path = str(
+                Path(device_path).expanduser().parent
+                / "owner_token"
+            )
         return cls(
             plane,
             host=host,
@@ -88,6 +98,7 @@ class ControlPlaneServer:
             tls_cert=tls_cert,
             tls_key=tls_key,
             allow_insecure=allow_insecure,
+            owner_token_path=owner_token_path,
         )
 
     def start(self) -> None:

@@ -14,6 +14,11 @@ Security posture:
 - Binding a non-loopback address without TLS is refused.
 - Every request authenticates via ``Authorization: Bearer`` except
   the pairing bootstrap endpoints, which are rate-limited.
+- Owner-only endpoints (``/v1/owner/pairings*``) authorize pairing
+  approval from the PC itself: they require a loopback client
+  address plus a high-entropy owner token minted on first start and
+  kept in a mode-0600 file next to the device registry.  The token
+  is compared in constant time and is never logged.
 - WebSocket authentication prefers the ``Authorization: Bearer``
   header on the upgrade request.  A ``?token=`` query parameter is
   accepted only as a compatibility fallback for clients that cannot
@@ -39,7 +44,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
+import os
 import secrets
 import socket
 import ssl
@@ -58,6 +65,56 @@ from afnan_ai.control.plane import ControlPlaneError
 
 def _is_loopback(host: str) -> bool:
     return host in ("127.0.0.1", "::1", "localhost")
+
+
+#: Default location of the owner token file, next to the device
+#: registry.  The token authorizes owner-only endpoints (pairing
+#: approval) and is only ever honored on loopback connections.
+DEFAULT_OWNER_TOKEN_PATH = os.path.expanduser(
+    "~/.afnan-ai/control/owner_token"
+)
+
+
+def load_or_create_owner_token(path: str | None = None) -> str:
+    """Load the owner token, creating it (mode 0600) if missing.
+
+    The owner token is a high-entropy bearer secret minted on first
+    server start.  It authorizes the owner-only HTTP endpoints
+    (``/v1/owner/...``) used by the ``approve_pairing`` CLI on the
+    PC itself.  The file must never be transmitted or logged.
+    """
+    raw = os.path.expanduser(path or DEFAULT_OWNER_TOKEN_PATH)
+    parent = os.path.dirname(raw)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    try:
+        fd = os.open(
+            raw, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+        )
+    except FileExistsError:
+        with open(raw, "r", encoding="utf-8") as handle:
+            token = handle.read().strip()
+        if (
+            not token
+            or len(token) < 32
+            or any(ch.isspace() for ch in token)
+        ):
+            raise TransportError(
+                "owner token file is present but invalid; "
+                "delete it and restart the server to mint a new one"
+            )
+        return token
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(secrets.token_urlsafe(32))
+    except BaseException:
+        try:
+            os.unlink(raw)
+        except OSError:
+            pass
+        raise
+    with open(raw, "r", encoding="utf-8") as handle:
+        return handle.read().strip()
 
 
 class TransportError(Exception):
@@ -338,6 +395,33 @@ class ControlHTTPHandler(BaseHTTPRequestHandler):
                 return token
         return ""
 
+    def _require_owner(self) -> None:
+        """Authorize an owner-only endpoint.
+
+        The owner approves pairings on the PC itself, so these
+        endpoints additionally require a loopback client address —
+        even over TLS from another host they are refused.  The
+        owner token itself is compared in constant time.
+        """
+        if not _is_loopback(self._client_ip()):
+            raise PermissionError(
+                "owner endpoints are only available on loopback"
+            )
+        presented = self._bearer()
+        transport = self._transport()
+        if not presented or not hmac.compare_digest(
+            presented, transport._owner_token
+        ):
+            raise AuthenticationError("owner authentication failed")
+
+    @staticmethod
+    def _owner_label(body: dict) -> str:
+        """Audit label for who approved; strictly bounded."""
+        label = body.get("approved_by", "owner")
+        if not isinstance(label, str) or not label.strip():
+            return "owner"
+        return label.strip()[:64]
+
     def _client_ip(self) -> str:
         try:
             return self.client_address[0]
@@ -371,10 +455,44 @@ class ControlHTTPHandler(BaseHTTPRequestHandler):
                 self._handle_sse(request_id)
             elif parsed.path == "/v1/stream":
                 self._handle_websocket(request_id)
+            elif parsed.path == "/v1/owner/pairings":
+                self._require_owner()
+                now = time.time()
+                self._send_json(
+                    200,
+                    {
+                        "pairings": [
+                            {
+                                "pairing_id": r.pairing_id,
+                                "device_id": (
+                                    r.requesting_device_id
+                                ),
+                                "device_name": (
+                                    r.requesting_device_name
+                                ),
+                                "platform": r.platform,
+                                "expires_in_s": max(
+                                    0,
+                                    int(r.expires_at - now),
+                                ),
+                            }
+                            for r in plane.pairing.list_pending()
+                        ]
+                    },
+                    request_id=request_id,
+                )
             else:
                 self._error(404, "not found", request_id)
         except TransportError as e:
             self._error(400, str(e), request_id)
+        except AuthenticationError as e:
+            self._error(401, str(e), request_id)
+        except (PairingError, ControlPlaneError) as e:
+            self._error(400, str(e), request_id)
+        except PermissionError as e:
+            self._error(403, str(e), request_id)
+        except KeyError:
+            self._error(404, "not found", request_id)
         except Exception:
             # Never leak tracebacks or internal detail.
             self._error(500, "internal error", request_id)
@@ -391,6 +509,8 @@ class ControlHTTPHandler(BaseHTTPRequestHandler):
             if parsed.path in (
                 "/v1/pair/request",
                 "/v1/pair/redeem",
+                "/v1/owner/pairings/approve",
+                "/v1/owner/pairings/deny",
             ):
                 if not transport.pair_limiter.allow(
                     f"pair:{self._client_ip()}"
@@ -421,6 +541,34 @@ class ControlHTTPHandler(BaseHTTPRequestHandler):
                 )
             elif parsed.path == "/v1/pair/redeem":
                 result = plane.pair_redeem(body)
+                self._send_json(
+                    200, result, request_id=request_id
+                )
+            elif parsed.path == "/v1/owner/pairings/approve":
+                self._require_owner()
+                pairing_id = str(body.get("pairing_id", ""))
+                if not pairing_id:
+                    raise ControlPlaneError(
+                        "pairing_id is required"
+                    )
+                result = plane.pair_approve(
+                    pairing_id,
+                    approved_by=self._owner_label(body),
+                )
+                self._send_json(
+                    200, result, request_id=request_id
+                )
+            elif parsed.path == "/v1/owner/pairings/deny":
+                self._require_owner()
+                pairing_id = str(body.get("pairing_id", ""))
+                if not pairing_id:
+                    raise ControlPlaneError(
+                        "pairing_id is required"
+                    )
+                result = plane.pair_reject(
+                    pairing_id,
+                    approved_by=self._owner_label(body),
+                )
                 self._send_json(
                     200, result, request_id=request_id
                 )
@@ -621,6 +769,7 @@ class ControlTransport:
         allow_insecure: bool = False,
         cors_origins: tuple[str, ...] = (),
         ws_idle_timeout_s: float = 120.0,
+        owner_token_path: str | None = None,
     ) -> None:
         if not tls_cert or not tls_key:
             if not allow_insecure:
@@ -649,6 +798,16 @@ class ControlTransport:
         # Abuse protection: per-IP sliding windows.
         self.pair_limiter = _SlidingWindowLimiter(10, 60.0)
         self.command_limiter = _SlidingWindowLimiter(240, 60.0)
+        # Owner token: bearer secret for the owner-only endpoints
+        # (/v1/owner/...), minted once and kept in a 0600 file next
+        # to the device registry.  Never logged, never transmitted
+        # except by the owner's own CLI on this machine.
+        self.owner_token_path = os.path.expanduser(
+            owner_token_path or DEFAULT_OWNER_TOKEN_PATH
+        )
+        self._owner_token = load_or_create_owner_token(
+            self.owner_token_path
+        )
         # WebSocket connection accounting.
         self._ws_lock = threading.Lock()
         self._ws_total = 0
