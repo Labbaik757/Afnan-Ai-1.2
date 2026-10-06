@@ -1,4 +1,4 @@
-"""End-to-end tests for the full Phase-1 Agent pipeline.
+"""End-to-end tests for the full Agent pipeline.
 
 These tests drive one user goal through every component in order:
 
@@ -348,10 +348,10 @@ class TestCrossPlatformPipeline(unittest.TestCase):
 
 
 # ----------------------------------------------------------------------
-# Phase-1 infrastructure: config + structured logging
+# Core infrastructure: config + structured logging
 # ----------------------------------------------------------------------
 
-class TestPhase1Infrastructure(unittest.TestCase):
+class TestCoreInfrastructure(unittest.TestCase):
     def test_config_defaults(self):
         cfg = AgentConfig()
         self.assertEqual(cfg.wake_word, "afnan")
