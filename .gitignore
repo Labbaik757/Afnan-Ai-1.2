@@ -1,3 +1,10 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+# Android (local SDK path and build outputs are machine-specific)
+local.properties
+build/
+.gradle/
+.kotlin/
+*.apk
+*.aab
