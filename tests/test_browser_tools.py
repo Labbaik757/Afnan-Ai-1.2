@@ -254,7 +254,7 @@ class TestBrowserToolsInAgentPipeline(unittest.TestCase):
             adapter=FakeAdapter(), enable_browser_tools=False
         )
         self.assertNotIn("browser_launch", assistant.tools.names())
-        # Phase 1 tools are unaffected
+        # Core tools are unaffected
         self.assertIn("open_url", assistant.tools.names())
 
 
