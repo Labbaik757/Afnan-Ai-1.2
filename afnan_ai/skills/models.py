@@ -166,6 +166,17 @@ class Skill:
     created_by: str = "developer"
     created_at: str = field(default_factory=_utcnow)
     changelog: list[str] = field(default_factory=list)
+    # Long-horizon extensions (optional; backward compatible).
+    source: str = "developer"  # system|developer|user_created|
+    # agent_generated|imported
+    execution_limits: dict[str, Any] = field(
+        default_factory=dict
+    )  # max_steps|max_subskill_depth|timeout_s|max_loop_iterations
+    compatibility: dict[str, Any] = field(
+        default_factory=dict
+    )  # afnan_version|os|needs_browser|needs_computer
+    integrity_hash: str = ""
+    verification_status: str = "unverified"
 
     def __post_init__(self) -> None:
         self.skill_id = str(self.skill_id).strip()
@@ -194,6 +205,14 @@ class Skill:
         step_ids = [s.step_id for s in self.steps]
         if len(set(step_ids)) != len(step_ids):
             raise ValueError("duplicate step_id in skill steps")
+        valid_sources = {
+            "system", "developer", "user_created",
+            "agent_generated", "imported",
+        }
+        if self.source not in valid_sources:
+            raise ValueError(
+                f"unknown skill source: {self.source!r}"
+            )
 
     @property
     def tool_name(self) -> str:
@@ -218,6 +237,11 @@ class Skill:
             "created_by": self.created_by,
             "created_at": self.created_at,
             "changelog": list(self.changelog),
+            "source": self.source,
+            "execution_limits": dict(self.execution_limits),
+            "compatibility": dict(self.compatibility),
+            "integrity_hash": self.integrity_hash,
+            "verification_status": self.verification_status,
         }
 
     @classmethod
@@ -246,6 +270,19 @@ class Skill:
                 data.get("created_at", _utcnow())
             ),
             changelog=list(data.get("changelog") or []),
+            source=str(data.get("source", "developer")),
+            execution_limits=dict(
+                data.get("execution_limits") or {}
+            ),
+            compatibility=dict(
+                data.get("compatibility") or {}
+            ),
+            integrity_hash=str(
+                data.get("integrity_hash", "")
+            ),
+            verification_status=str(
+                data.get("verification_status", "unverified")
+            ),
         )
 
 
