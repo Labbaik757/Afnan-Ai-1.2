@@ -128,7 +128,7 @@ class AfnanAgent:
             self.adapter,
             screenshot_capture=self._capture_screenshot,
         )
-        # Browser control (Phase 2): a BrowserController bound to
+        # Browser control: a BrowserController bound to
         # browser Tools in the same registry, so the Planner/Agent
         # can launch, navigate and read pages like any other
         # capability.  Constructing it launches nothing; the
