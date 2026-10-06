@@ -263,6 +263,8 @@ class RemoteCommandRouter:
                     result=dict(existing.result),
                     correlation_id=command.correlation_id,
                 )
+                if self.metrics is not None:
+                    self.metrics.record_duplicate_command()
                 self._audit(command, result, "duplicate")
                 return result
             if not self.idempotency.claim(

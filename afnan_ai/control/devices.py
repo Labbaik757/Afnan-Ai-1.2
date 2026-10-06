@@ -213,6 +213,30 @@ class DeviceRegistry:
             self._save()
             return info
 
+    def clear_revocation(
+        self, device_id: str, *, cleared_by: str = ""
+    ) -> DeviceInfo:
+        """Explicitly clear a revocation so the device may pair again.
+
+        Re-pairing a revoked device is never automatic: the owner
+        must call this first.  Returns the device with trust reset
+        to UNPAIRED.
+        """
+        with self._lock:
+            info = self._devices.get(device_id)
+            if info is None:
+                raise KeyError(
+                    f"unknown device: {device_id}"
+                )
+            if info.trust != DeviceTrust.REVOKED:
+                raise ValueError(
+                    f"device is not revoked: {device_id}"
+                )
+            info.trust = DeviceTrust.UNPAIRED
+            info.connection_state = ConnectionState.OFFLINE
+            self._save()
+            return info
+
     # -- presence -------------------------------------------------------
 
     def mark_seen(

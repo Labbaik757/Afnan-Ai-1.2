@@ -33,6 +33,10 @@ class MetricsCollector:
         self._approval_latency_sum = 0.0
         self._devices_revoked = 0
         self._rate_limit_hits = 0
+        self._ws_disconnects = 0
+        self._sse_disconnects = 0
+        self._event_gaps = 0
+        self._duplicate_commands = 0
         self._active_devices = 0
         self._active_sessions = 0
 
@@ -90,6 +94,22 @@ class MetricsCollector:
         with self._lock:
             self._rate_limit_hits += 1
 
+    def record_ws_disconnect(self) -> None:
+        with self._lock:
+            self._ws_disconnects += 1
+
+    def record_sse_disconnect(self) -> None:
+        with self._lock:
+            self._sse_disconnects += 1
+
+    def record_event_gap(self) -> None:
+        with self._lock:
+            self._event_gaps += 1
+
+    def record_duplicate_command(self) -> None:
+        with self._lock:
+            self._duplicate_commands += 1
+
     def set_presence(
         self, *, devices: int, sessions: int
     ) -> None:
@@ -131,6 +151,10 @@ class MetricsCollector:
                 "reconnects": self._reconnects,
                 "events_delivered": self._events_delivered,
                 "events_dropped": self._events_dropped,
+                "event_gaps": self._event_gaps,
+                "duplicate_commands": self._duplicate_commands,
+                "ws_disconnects": self._ws_disconnects,
+                "sse_disconnects": self._sse_disconnects,
                 "approvals_requested": self._approvals_requested,
                 "approvals_decided": self._approvals_decided,
                 "approval_latency_avg_s": round(

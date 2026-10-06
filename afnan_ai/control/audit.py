@@ -79,6 +79,17 @@ class ControlPlaneAuditAdapter:
             details={"approved_by": approved_by},
         )
 
+    def device_event(
+        self, event: str, *, device_id: str, actor: str = ""
+    ) -> None:
+        """Audit a generic device-lifecycle event (no secrets)."""
+        self._event(
+            f"device.{event}",
+            actor=actor or f"remote:{device_id}",
+            action=f"device_{event}",
+            device_id=device_id,
+        )
+
     def permission_granted(
         self,
         *,

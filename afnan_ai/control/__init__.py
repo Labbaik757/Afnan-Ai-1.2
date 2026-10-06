@@ -54,6 +54,7 @@ from afnan_ai.control.transport import (
     TransportError,
 )
 from afnan_ai.control import views
+from afnan_ai.control import client
 
 __all__ = [
     "ApprovalGateway",
@@ -93,4 +94,5 @@ __all__ = [
     "queue_policy_for",
     "valid_session_transition",
     "views",
+    "client",
 ]
