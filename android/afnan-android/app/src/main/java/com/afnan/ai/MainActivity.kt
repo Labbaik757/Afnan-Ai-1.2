@@ -15,6 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.afnan.ai.ui.debug.CrashReportScreen
 import com.afnan.ai.ui.lock.AppLockScreen
 import com.afnan.ai.ui.navigation.AfnanScaffold
 import com.afnan.ai.ui.navigation.Routes
@@ -39,6 +40,25 @@ class MainActivity : FragmentActivity() {
         // Swap the splash theme for the real app theme before drawing.
         setTheme(R.style.Theme_AfnanAI)
         super.onCreate(savedInstanceState)
+
+        // If the last run crashed, show the saved stack trace instead
+        // of starting normally — the user screenshots it for diagnosis.
+        val crashReport = AfnanApp.readCrashLog(this)
+        if (crashReport != null) {
+            setContent {
+                AfnanTheme(app = application as AfnanApp) {
+                    CrashReportScreen(
+                        report = crashReport,
+                        onDismiss = {
+                            AfnanApp.clearCrashLog(this)
+                            recreate()
+                        },
+                    )
+                }
+            }
+            return
+        }
+
         handleIntent(intent)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
