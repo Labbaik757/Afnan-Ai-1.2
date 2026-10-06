@@ -1,104 +1,2020 @@
-# Afnan AI 1.2
+# 🤖 Afnan AI 1.2 (Windows + macOS + Linux Edition)
 
-A cross-platform (Windows / macOS / Linux) personal voice assistant in Python, powered by a local LLM. Say **"Afnan"** to wake it, speak your command, and it responds — in Urdu or English.
+Afnan AI is a personal voice assistant built with Python and powered by Ollama. It can understand voice commands, open applications, search the web, play music, capture screenshots, and assist you with everyday tasks using natural voice interaction.
 
-## Features
+> **Version:** 1.2  
+> **Platform:** Windows 10/11, macOS, Linux  
+> **Language:** Python
 
-- Voice wake word ("Afnan") with on-device detection
-- Urdu speech recognition (`ur-PK`) and Urdu neural text-to-speech
-- Local AI chat (Ollama / Llama 3) — no cloud account needed
-- Open apps, folders and files by voice
-- Web and YouTube search, play songs on YouTube
-- Screenshot capture
-- Autonomous agent: plans tasks, uses tools, verifies results, recovers from failures
-- Browser automation and desktop (computer-use) control
-- Research with evidence, citations and contradiction detection
-- Skills, subagents, memory, goals and scheduled tasks
-- Security-first: human approval for sensitive actions, secrets stay in a vault, untrusted web content is treated as data
+---
 
-## Requirements
+# ✨ Features
 
-- Python 3.10+
+- 🎤 Voice Recognition
+- 🤖 Local AI Chat using Ollama (Llama 3)
+- 🗣️ Text-to-Speech Responses (Windows SAPI / macOS `say`, or pyttsx3)
+- 💻 Open Visual Studio Code
+- 🌐 Open Google Chrome / Microsoft Edge
+- 🧭 Open Safari (macOS) — on Windows/Linux it opens your default browser instead
+- 💬 Open WhatsApp (app on macOS, WhatsApp/protocol or WhatsApp Web on Windows)
+- ▶️ Open YouTube
+- 📂 Smart Folder Search (Downloads, Desktop, Documents, Pictures, Music, Videos)
+- 🎵 Play Songs on YouTube
+- 🔎 Google Search
+- 📺 YouTube Search
+- 📸 Screenshot Capture
+- 🎬 Startup GIF Animation (in your browser, on every platform)
+- 🎯 Wake Word Detection ("Afnan")
+- ⚡ Fast Voice Command Processing
+
+---
+
+# 🎙️ Available Voice Commands
+
+> **Urdu-first:** Afnan ab Urdu mein sunta aur bolta hai.
+> Speech recognition `ur-PK` pe hoti hai aur jawab Urdu
+> neural voice mein aata hai. English text pe purana
+> system-engine behaviour rehta hai.
+
+| Voice Command | Action |
+|---------------|--------|
+| Afnan | Activate the assistant |
+| Open Visual Studio Code / Open VS Code | Opens VS Code |
+| Open Chrome | Opens Google Chrome |
+| Open Edge | Opens Microsoft Edge (Windows) |
+| Open Safari | Opens Safari (macOS only) |
+| Open YouTube | Opens YouTube |
+| Open WhatsApp | Opens WhatsApp |
+| Open Folder Downloads | Opens Downloads folder |
+| Open Folder Desktop | Opens Desktop folder |
+| Open Folder Documents | Opens Documents folder |
+| Play Believer | Plays the requested song on YouTube |
+| Search Google for Python | Searches Google |
+| Search YouTube for AI | Searches YouTube |
+| Screenshot | Captures a screenshot |
+| Tell me about yourself | Afnan introduces itself |
+| Introduce yourself | Afnan introduces itself |
+| Who are you | Afnan introduces itself |
+| Stop Afnan | Closes Afnan AI |
+
+---
+
+# 🛠️ Technologies Used
+
+- Python
+- SpeechRecognition
+- Ollama
+- PyWhatKit
+- PyAutoGUI
+- Webbrowser
+- pyttsx3 (cross-platform text-to-speech, with OS speech as fallback)
+
+---
+
+# 📦 Requirements
+
+- Python 3.10 or later
 - Windows 10/11, macOS, or Linux
-- Ollama with the Llama 3 model (`ollama pull llama3`)
-- Microphone (with OS permission enabled)
-- Internet connection (for speech recognition and online features)
+- Ollama Installed, with the Llama 3 model: `ollama pull llama3`
+- Working Microphone (and microphone permission on Windows/macOS)
+- Internet Connection (for Google speech recognition and online features)
 
-## Installation
+### Windows note for PyAudio
+
+On Windows, `pip install PyAudio` sometimes needs a wheel. If it fails, install it with:
+
+```powershell
+pip install pipwin
+pipwin install pyaudio
+```
+
+or install a matching PyAudio wheel for your Python version, then run
+`pip install -r requirements.txt` again.
+
+---
+
+# 🚀 Installation
+
+### Clone the repository
 
 ```bash
 git clone https://github.com/Labbaik757/Afnan-Ai-1.2.git
 cd Afnan-Ai-1.2
-pip install -r requirements.txt
 ```
 
-On Windows, if `PyAudio` fails to build, install it via `pipwin` or a matching wheel first, then re-run the command above. macOS-only and Windows-only packages in `requirements.txt` are platform-marked, so pip skips the ones that don't apply.
+### Install dependencies
 
-## Usage
+Windows (PowerShell / CMD):
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+macOS / Linux:
 
 ```bash
-python main.py        # Windows
-python3 main.py      # macOS / Linux
+pip3 install -r requirements.txt
 ```
 
-1. Say **"Afnan"** — it replies "Yes Boss".
-2. Speak your command, e.g. "Open Chrome", "Search Google for Python", "Screenshot".
-3. Anything it doesn't recognize as a command goes to the local AI model.
+The macOS-only packages in `requirements.txt` are marked with
+`sys_platform == 'darwin'`, so pip automatically skips them on Windows
+and Linux — and the Windows-only `pywin32` is skipped on macOS/Linux.
 
-## Configuration
+### Run Afnan AI
 
-Key environment variables (all optional):
+Windows:
 
-| Variable | Purpose | Default |
-|---|---|---|
-| `AFNAN_STT_LANGUAGE` | Speech recognition language | `ur-PK` |
-| `AFNAN_TTS_URDU_VOICE` | Urdu TTS voice | `ur-PK-GulNawazNeural` |
-| `AFNAN_WAKEWORD_MODEL` | Path to a custom wake-word model | built-in model |
-| `AFNAN_WAKEWORD_THRESHOLD` | Wake-word sensitivity | `0.5` |
-| `AFNAN_BROWSER_RUNTIME_DIR` | Browser profile storage | `~/.afnan-ai/browser-runtime` |
+```powershell
+python main.py
+```
 
-## Project structure
+macOS / Linux:
+
+```bash
+python3 main.py
+```
+
+---
+
+# 📄 requirements.txt (core)
 
 ```text
-main.py                  # entry point
-afnan_ai/
-  agent.py               # central orchestrator
-  agent_loop.py          # autonomous observe→decide→act→verify loop
-  planner.py / executor.py / verifier.py / recovery.py
-  state.py               # central task state
-  tools/                 # generic tool interface + registry
-  browser/               # browser automation runtime
-  computer/              # desktop automation runtime
-  skills/                # dynamic skill system
-  subagents/             # multi-agent orchestration
-  connectors/            # external service integrations
-  artifacts/             # generated documents and files
-  context/               # long-context and trajectory reasoning
-  research/              # research & evidence intelligence
-  evaluation/            # self-evaluation and benchmarking
-  security/              # permissions, vault, audit
-  activity/              # activity center and approvals
-  memory_store.py / goal_manager.py / task_manager.py
-  scheduler.py           # scheduled and background tasks
-  speech.py / wakeword.py
-  platform/              # Windows / macOS / Linux adapters
-tests/                   # automated test suite
+SpeechRecognition
+PyAudio
+PyAutoGUI
+pywhatkit
+ollama
+pyttsx3
 ```
 
-Module-level documentation lives next to the code it describes (e.g. `afnan_ai/research/RESEARCH.md`, `afnan_ai/evaluation/EVALUATION.md`).
+---
 
-## Tests
+# 📁 Project Structure
+
+```
+Afnan-Ai-1.2
+│
+├── main.py                  (thin entry point, backwards compatible)
+├── afnan_ai/
+│   ├── agent.py             (core agent — no OS-specific code, no
+│   │                         direct model-client calls)
+│   ├── state.py             (centralized AgentState — goal, steps,
+│   │                         observations, tool results, status)
+│   ├── planner.py           (Planner — goal + AgentState + tools →
+│   │                         validated TaskPlan, never executes)
+│   ├── executor.py          (Executor — runs a TaskPlan step by step
+│   │                         via ToolRegistry, records AgentState)
+│   ├── verifier.py          (Verifier — checks actual results vs
+│   │                         expected_result, never re-executes)
+│   ├── orchestrator.py      (Agent — central orchestrator: state +
+│   │                         planner + executor + verifier, full
+│   │                         task lifecycle, max-iteration limit)
+│   ├── recovery.py          (RecoveryManager — replans after a
+│   │                         failed/uncertain step, never repeats
+│   │                         a failed action, attempts recorded)
+│   ├── config.py            (AgentConfig — wake word, limits,
+│   │                         default model; env overridable)
+│   ├── log_config.py        (structured logging, stdlib only)
+│   ├── browser/             (BrowserController — launch/connect,
+│   │   │                     tabs, navigation, page state, shutdown)
+│   │   ├── base.py          (tab/page types + structured errors)
+│   │   ├── backend.py       (BrowserBackend interface +
+│   │   │                     PlaywrightBackend)
+│   │   ├── controller.py    (session/tab management, validation)
+│   │   └── tools.py         (browser_* Tools for the registry)
+│   ├── llm/
+│   │   ├── base.py          (LLMProvider interface + typed errors)
+│   │   ├── ollama.py        (OllamaProvider — local Ollama, llama3)
+│   │   └── factory.py       (provider registry / default provider)
+│   ├── tools/
+│   │   ├── base.py          (Tool interface + structured errors)
+│   │   ├── registry.py      (ToolRegistry — register/get/execute)
+│   │   └── builtin.py       (open_url, open_application,
+│   │                         search_google, take_screenshot, ...)
+│   ├── speech.py            (pyttsx3 first, adapter speech as fallback)
+│   └── platform/
+│       ├── base.py          (PlatformAdapter interface)
+│       ├── factory.py       (auto-selects the adapter at runtime)
+│       ├── windows.py       (PowerShell speech, startfile, cmd start)
+│       ├── macos.py         (say, open / open -a, mdfind)
+│       └── linux.py         (espeak/spd-say, xdg-open)
+├── tests/                   (unit + integration + end-to-end tests,
+│                             run on any host OS)
+├── tools/check_compatibility.py
+├── requirements.txt
+├── README.md
+├── afnan_animation.gif
+├── afnan_animation.html
+└── screenshots/   (created when you take a screenshot)
+```
+
+# 🏗️ Architecture — OS Abstraction Layer
+
+Platform-specific code is isolated behind one interface, so the
+core agent never touches an OS command directly:
+
+- `afnan_ai/platform/base.py` — `PlatformAdapter`: `speak_system()`,
+  `open_path()`, `launch_app()`, `find_folder()`
+- `afnan_ai/platform/windows.py` / `macos.py` / `linux.py` — the
+  only files containing Windows, macOS or Linux specific calls
+- `afnan_ai/platform/factory.py` — `get_adapter()` reads
+  `platform.system()` at runtime and returns the Windows, macOS
+  or Linux adapter automatically — no configuration needed
+- `afnan_ai/agent.py` — wake word, command routing, search, music,
+  screenshots and Ollama fallback, all written against the adapter
+
+A test in `tests/test_agent_commands.py` fails if an OS-specific
+call ever leaks back into the core agent.
+
+# 🧠 AgentState — Centralized Task State
+
+`afnan_ai/state.py` provides one serializable `AgentState` per task.
+Every component (voice agent, platform adapters, tests, a future UI)
+can read and update the same object:
+
+```python
+from afnan_ai.state import AgentState
+
+state = AgentState.create("Open Chrome and search for Python")
+state.start_step("open chrome")
+state.add_observation("User said: open chrome", source="microphone")
+state.add_tool_result("chrome", success=True, output="opened")
+state.complete_step("open chrome", result="opened")
+state.complete_task()
+
+data = state.to_json()              # save / send anywhere
+restored = AgentState.from_json(data)  # lossless on any OS
+state.save("state.json")            # or AgentState.load("state.json")
+```
+
+It tracks the task **goal**, **current step**, **completed steps**,
+**failed steps** (with errors), **observations**, **tool results**
+and **status** (`pending`, `running`, `paused`, `completed`,
+`failed`, `cancelled`).  It uses only the Python standard library
+and `pathlib`, so a state saved on Windows loads identically on
+macOS and Linux.
+
+The voice agent updates it automatically for every command
+(`agent.state`), you can start an explicit task with
+`agent.start_task(goal)`, share one state between components by
+passing `AfnanAgent(state=...)`, or turn tracking off with
+`track_state=False` — existing behaviour is unchanged either way.
+
+Tests for creation, updating, JSON/file serialization and
+failure-state handling live in `tests/test_agent_state.py`.
+
+# 🤖 LLMProvider — Model Abstraction
+
+The agent never calls Ollama (or any model client) directly.  It
+only talks to the `LLMProvider` interface in `afnan_ai/llm/base.py`:
+
+- `chat(messages) -> str` — send chat messages, get the reply text
+- `generate(prompt) -> str` — single-prompt convenience wrapper
+- Typed failures: `LLMUnavailableError` (not installed),
+  `LLMConnectionError` (service unreachable) and
+  `LLMInvalidResponseError` (unexpected response shape) — no
+  provider-specific exception leaks into the agent
+
+The existing Ollama integration lives in
+`afnan_ai/llm/ollama.py` as `OllamaProvider`, unchanged in
+behaviour: local Ollama, model `llama3`, reply taken from
+`response["message"]["content"]`, and the same spoken messages on
+failure ("AI is not available. Ollama is not installed." /
+"AI is not responding. Make sure Ollama is running.").
+
+Adding a future local or cloud model means writing one new
+provider class and registering it in `afnan_ai/llm/factory.py` —
+the agent's code does not change:
+
+```python
+from afnan_ai.agent import AfnanAgent
+from afnan_ai.llm import create_provider
+
+agent = AfnanAgent(llm_provider=create_provider("ollama", model="llama3"))
+# future: create_provider("some-cloud-provider", ...)
+```
+
+`agent.ask_ai(prompt)` is the interface-based entry point;
+`agent.ask_local_ai(prompt)` is kept as a backwards-compatible
+alias, and `main.py` exposes both plus `get_llm_provider()`.
+
+Tests for a successful response, a connection failure, an invalid
+response, an unavailable client and swapping in a completely
+different provider without touching the agent live in
+`tests/test_llm_provider.py`.  A test there also fails if a direct
+`ollama` call ever leaks back into `agent.py` or `main.py`.
+
+# 🧰 Tools — Generic Tool Interface & ToolRegistry
+
+Every capability is a `Tool` in `afnan_ai/tools/base.py` with a
+**name**, a **description**, a JSON-Schema-style **input schema**
+and an **execute** method.  The central `ToolRegistry`
+(`afnan_ai/tools/registry.py`) registers, finds and runs them:
+
+```python
+from afnan_ai.tools import create_default_registry
+
+registry = create_default_registry(adapter)   # adapter from afnan_ai.platform
+registry.register(my_custom_tool)             # dynamic registration
+tool = registry.get("search_google")          # raises a structured error if unknown
+
+result = registry.execute("search_google", {"query": "python"})
+result.success   # True
+result.output    # {"query": "python", "url": "https://...", "opened": True}
+
+bad = registry.execute("search_google", {})   # missing argument — no crash
+bad.error.code   # ToolErrorCode.MISSING_ARGUMENTS
+```
+
+Built-in tools preserve the exact behaviour Afnan already had:
+`open_url`, `open_application` (Chrome/VS Code/Edge/WhatsApp/
+Safari via the platform adapter), `search_google`, `search_youtube`
+and `take_screenshot`.  The voice agent routes its commands through
+the registry (`agent.execute_tool(...)`, `agent.list_tools()`),
+records every execution in `AgentState`, and falls back exactly as
+before (e.g. Chrome not launching opens google.com instead).
+`registry.definitions()` returns serializable tool descriptions
+ready to hand to an LLM for function calling.
+
+Failures are structured, never bare crashes: an unknown tool gives
+`tool_not_found`, missing arguments give `missing_arguments`, a
+wrong-typed argument gives `invalid_arguments`, and a tool that
+fails while running gives `execution_failed` — all as
+`ToolResult(success=False, error=ToolError(code, message, tool,
+details))`, with matching exception forms (`ToolNotFoundError`,
+`ToolValidationError`, `ToolExecutionError`) for callers who prefer
+`try/except`.
+
+Tests for registration, dynamic lookup, execution, invalid tools,
+missing/invalid arguments and execution failures live in
+`tests/test_tool_registry.py`.
+
+# 🗺️ Planner — Structured Task Plans (No Execution)
+
+`afnan_ai/planner.py` contains a `Planner` that turns a user goal,
+the current `AgentState` and the registered tools into a
+structured `TaskPlan` — and nothing more.  The Planner never
+executes a tool; it only reads tool definitions from the
+`ToolRegistry` to know what it may plan with.
+
+```python
+from afnan_ai.planner import Planner
+
+planner = Planner(agent.llm, agent.tools)   # or: agent.planner
+plan = planner.plan("Open Chrome and search for Python", state=agent.state)
+
+plan.goal            # "Open Chrome and search for Python"
+plan.steps[0].step_id         # "step_1"
+plan.steps[0].description     # "Open the Chrome browser"
+plan.steps[0].tool_name       # "open_application"
+plan.steps[0].arguments       # {"application": "chrome"}  (schema-validated)
+plan.steps[0].expected_result # "Chrome is launched"
+data = plan.to_json()         # TaskPlan.from_json(data) restores it
+```
+
+The LLM (through the `LLMProvider` interface, Ollama by default)
+is asked to reply with exactly one JSON object
+`{"goal": ..., "steps": [...]}` and that output is validated
+strictly before a plan is returned: valid JSON, exactly the
+required fields on every step (`step_id`, `description`,
+`tool_name`, `arguments`, `expected_result`), unique `step_id`
+values, `tool_name` must be one of the available tools, and
+`arguments` must satisfy that tool's input schema.
+
+Invalid or failed planning is handled safely with structured
+`PlanningError`s — never a bare crash and never a half-valid plan:
+non-JSON output (`invalid_llm_output`), an unknown tool or bad
+arguments (`invalid_plan`), an unreachable model
+(`llm_connection_failed`), a missing model (`llm_unavailable`),
+an empty goal (`empty_goal`) or no tools to plan with
+(`no_tools_available`).  The agent exposes the same thing as
+`agent.create_plan(goal)` (and `main.create_plan(goal)`); a
+successful plan is recorded in `AgentState` as an observation,
+which is bookkeeping, not execution.
+
+Tests for successful planning, invalid LLM output (bad JSON,
+missing/extra fields, unknown tool, bad arguments, duplicate
+`step_id`), failed planning (connection failure, unavailable
+model, empty goal, no tools) and the never-executes-tools
+guarantee live in `tests/test_planner.py`.
+`tools/check_compatibility.py` additionally AST-checks that
+`planner.py` contains no tool-execution call.
+
+# ⚙️ Executor — Running a TaskPlan
+
+`afnan_ai/executor.py` carries out a `TaskPlan` produced by the
+Planner.  For every step, in order, the `Executor`:
+
+1. checks the named tool **exists** in the ToolRegistry,
+2. **validates the step's arguments** against that tool's input schema,
+3. executes the tool **through the ToolRegistry only**, and
+4. records the result (tool result + completed/failed step) in `AgentState`.
+
+```python
+from afnan_ai.executor import Executor
+
+executor = Executor(agent.tools, state=agent.state)  # or: agent.executor
+report = executor.execute_plan(plan)
+
+report.success                 # True only if every step really worked
+report.status                  # "completed" / "failed"
+report.step_results[0].output  # the tool's real output
+report.step_results[0].error   # structured ToolError dict on failure
+agent.state.status             # completed / failed — results are recorded
+```
+
+Two safety rules are enforced and tested:
+
+- **A failed action is never silently successful.** An unknown tool
+  (`tool_not_found`), bad arguments (`missing_arguments` /
+  `invalid_arguments`), a crashing tool (`execution_failed`) — each
+  makes that step `success=False`, fails the task in `AgentState`,
+  and by default stops the plan so later steps are reported as
+  `skipped`, not as done. (`Executor(..., stop_on_failure=False)`
+  attempts every step, but the report is still `failed`.)
+- **No arbitrary code execution.** A plan step can only name an
+  already-registered tool; tool names and arguments are treated
+  strictly as data, never as Python code, a shell command or an
+  import. `tools/check_compatibility.py` AST-checks that
+  `executor.py` dispatches only via `registry.execute(...)`.
+
+The agent ties both halves together:
+
+```python
+agent.execute_plan(plan)                    # execute an existing plan
+report = agent.plan_and_execute("Open Chrome and search for Python")
+```
+
+Tests for successful execution, failed and crashing tools,
+invalid tools, invalid arguments, skipped steps, AgentState
+updates and the no-arbitrary-code guarantee live in
+`tests/test_executor.py`.
+
+# 🔍 Verifier — Did the Step Actually Do What Was Expected?
+
+`afnan_ai/verifier.py` contains an independent `Verifier` that
+checks each executed step's **actual** result against that step's
+**expected_result**.  It holds no ToolRegistry and no model, so it
+cannot re-run anything — it only analyzes the structured execution
+result (from the Executor), plus any evidence already in
+`AgentState` (completed/failed step records, tool results,
+observations).
+
+```python
+from afnan_ai.verifier import Verifier, VerificationStatus
+
+verifier = Verifier()  # or: agent.verifier
+result = verifier.verify_step(step, execution_result, state=state)
+result.status      # VerificationStatus.VERIFIED / FAILED / UNCERTAIN
+result.reason      # human-readable explanation
+result.confidence  # 0.0–1.0 evidence strength
+
+report = verifier.verify_plan(plan, execution_report, state=state)
+report.status      # failed if any step failed, verified only if all verified
+```
+
+- **verified** — the execution succeeded and the actual output
+  confirms the expected outcome (e.g. expected "Chrome is launched",
+  output `{"application": "chrome", "launched": true}`)
+- **failed** — the execution failed or was skipped, the output flags
+  a non-outcome (`launched: false`), a different application actually
+  ran, or the output shares nothing with the expected outcome
+- **uncertain** — no result/evidence, no or vague `expected_result`,
+  success with no observable output, only partial keyword overlap,
+  or conflicting evidence between the execution result and
+  `AgentState`
+
+Every judgement is recorded in `AgentState` — a `verifier`
+observation, a structured entry in
+`state.metadata["verifications"]`, and an annotation on the step's
+record — without adding a tool result, because recording a
+judgement is not executing a tool.  The analysis is deterministic
+(no LLM call), so the same result always verifies the same way.
+
+The agent ties the three phases together without merging them:
+
+```python
+report, verification = agent.execute_and_verify(plan)  # Executor, then Verifier
+```
+
+Tests for verified, failed and uncertain outcomes, contradictions,
+AgentState recording and the never-re-executes guarantee live in
+`tests/test_verifier.py`; `tools/check_compatibility.py`
+additionally AST-checks that `verifier.py` contains no execution
+call.
+
+# 🧭 Agent — Central Orchestrator (Complete Task Lifecycle)
+
+`afnan_ai/orchestrator.py` contains the `Agent` — the central
+orchestration layer that connects `AgentState`, the `Planner`, the
+`Executor` and the `Verifier` and manages a complete task from
+goal to completion:
+
+```
+user goal received
+  → AgentState created / updated
+  → Planner generates a TaskPlan
+  → Executor executes the next step
+  → Verifier verifies that step's result
+  → AgentState updated
+  → next step … or task completion / failure
+```
+
+```python
+from afnan_ai import Agent
+
+result = agent.run_task("Open Chrome and search for Python scripting")
+result.status       # OrchestrationStatus.COMPLETED / FAILED /
+                    # PLANNING_FAILED / MAX_ITERATIONS_EXCEEDED
+result.success      # True only when the task genuinely completed
+result.iterations   # step executions actually performed
+result.plan         # the TaskPlan that was executed
+result.execution    # aggregated ExecutionReport (unrun steps = skipped)
+result.verification # aggregated VerificationReport
+result.state        # final AgentState (inspect, save, serialize…)
+```
+
+Rules the orchestrator enforces:
+
+- **Maximum iteration limit is mandatory.** Every step execution
+  counts as one iteration; reaching `max_iterations` (default 10,
+  validated as a positive integer, overridable per run but never
+  removable) stops the task with a `max_iterations_exceeded`
+  outcome — the agent can never loop forever.
+- **Failures stop the task honestly.** A planning failure
+  (`planning_failed`), an execution failure, or a failed
+  verification ends the run; remaining steps are reported as
+  *skipped*, never as done. An *uncertain* verification is
+  recorded but does not block an otherwise successful execution
+  unless `strict_verification=True`.
+- **No responsibility is duplicated.** The Agent plans only via
+  the Planner, executes only via the Executor (one step at a time,
+  through `Executor.execute_step`) and judges only via the
+  Verifier; `tools/check_compatibility.py` AST-checks that it
+  never touches the registry, a tool or a platform adapter itself.
+
+The voice assistant uses it as its orchestration layer
+(`agent.orchestrator`, `agent.run_task(goal)`, also exposed as
+`main.run_task(goal)`), while the existing voice-command behaviour
+is unchanged. Tests for successful completion, planning failure,
+execution failure, unknown tools, the maximum-iteration stop and
+voice-assistant integration live in `tests/test_orchestrator.py`.
+
+Every request the user speaks (after the wake word) or types goes
+through this orchestrator: `agent.handle_request(text)` (also
+`main.handle_request(text)`, and `agent.process_command(text)` for
+backwards compatibility) delegates the actual task to
+`Agent.run()` and speaks the outcome.  Session control
+("stop afnan", "introduce yourself") is handled directly, as
+before.  If the model cannot plan at all (e.g. it is offline),
+the request falls back to the clearly isolated legacy routing in
+`agent._handle_legacy_command` — the pre-Tool command patterns,
+some of which use capabilities that are not Tools yet (opening a
+folder by name, playing a song).  Nothing is broken by the
+migration; those patterns are marked for later migration into
+Tools.  `main.py` itself stays a thin set of delegates with no
+planning, execution, verification or recovery logic.
+
+# 🩹 Recovery — Replanning After a Failed or Uncertain Step
+
+`afnan_ai/recovery.py` contains the `RecoveryManager`.  When a
+step fails, or the Verifier cannot confirm it (uncertain/failed),
+the orchestrator does **not** blindly run the same action again.
+Instead, Recovery hands the Planner:
+
+- the original goal,
+- the failure reason,
+- the current `AgentState` (completed steps, observations,
+  earlier attempts), and
+- the exact previous attempt (tool + arguments) that did not work,
+
+and asks for a *different* plan for the remaining work.
+
+- **No blind repetition** — a recovery plan containing any
+  already-failed action (same tool, same arguments) is rejected
+  and never executed.
+- **Limited attempts** — `max_recovery_attempts` (default 2;
+  0 disables recovery) caps replanning, and recovered steps still
+  count against the orchestrator's maximum-iteration limit.
+- **Fully recorded** — every attempt (replanned, planner-failed,
+  rejected, limit-reached) is stored in
+  `state.metadata["recovery_attempts"]`, noted as a `recovery`
+  observation, and returned on
+  `result.recovery_attempts`.
+- **No duplicated responsibilities** — Recovery only replans via
+  the Planner; execution stays with the Executor, judgement with
+  the Verifier, and the decision of when to recover or give up
+  with the Agent.  `tools/check_compatibility.py` AST-checks that
+  `recovery.py` never executes a tool.
+
+Tests for successful recovery, blind-repeat rejection,
+planner-replan failure, the recovery-attempt limit and the
+iteration cap live in `tests/test_recovery.py`; voice-independent
+Agent invocation and entry-point/backward-compatibility
+integration tests live in `tests/test_entry_points.py`.
+
+# 🌐 BrowserController — Programmatic Browser Control (Phase 2)
+
+`afnan_ai/browser/` is a modular browser-control system that
+works the same on Windows, macOS and Linux:
+
+- **`BrowserController`** owns a browser session: launch or
+  connect (CDP), create/select/close tabs, navigate by URL,
+  back/forward/reload, read the current page state (URL + title),
+  and shut down.  Navigating with no tab open creates one.
+- **`BrowserBackend`** is the driver boundary (now the
+  `BrowserEngineAdapter` interface — see the Runtime section
+  below).  The default `ChromiumAdapter` drives a real
+  Chromium-family browser over the Chrome DevTools Protocol
+  (standard library only); `PlaywrightAdapter` remains as the
+  fallback/development adapter (lazily imported — installing
+  nothing is fine until a browser actually launches).  Tests
+  and other hosts can inject any adapter without touching
+  controller or agent code.
+- **Tools** — every operation is a registry Tool (`browser_launch`,
+  `browser_connect`, `browser_new_tab`, `browser_list_tabs`,
+  `browser_select_tab`, `browser_close_tab`, `browser_navigate`,
+  `browser_current_page`, `browser_back`, `browser_forward`,
+  `browser_reload`, `browser_shutdown`), registered on the agent's
+  ToolRegistry by default, so the Planner can plan browser tasks
+  and the Executor runs them like any other capability.  Disable
+  with `AfnanAgent(..., enable_browser_tools=False)`.
+- **Page interaction tools** — `browser_find_elements` (inspect
+  elements: identity `ref` + tag/text/attributes/visible/enabled),
+  `browser_inspect_element`, `browser_click`, `browser_type`,
+  `browser_clear`, `browser_select_option`, `browser_press_key`,
+  and `browser_scroll` (page scroll or scroll-element-into-view).
+  Targets are either a `ref` from `browser_find_elements` or a
+  locator: stable **selector / test id first**, with accessibility
+  fallbacks (**role + name**, label, placeholder, visible text).
+  Every interaction validates its target first — element must
+  exist, be current (a ref from before the last navigation is a
+  `stale_element` error; find it again), visible, enabled, and of
+  the right kind (typing only into editable fields, options only
+  on `<select>`) — so an action never lands on the wrong element.
+- **Structured errors only** — browser unavailable (install with
+  `pip install playwright` + `playwright install chromium`),
+  connection failed, browser not started, invalid tab,
+  navigation failures, `element_not_found`, `invalid_element`,
+  `stale_element` and `timeout` all come back as
+  ``ToolResult(success=False)`` with the browser error code in
+  `error.details["browser_error"]["code"]`; nothing crashes and
+  nothing silently "succeeds".
+- **Observation tools** — `browser_observe_page` returns the
+  page's structured state (URL, title, visible text, the
+  interactive elements with usable refs, and whether the page
+  changed since the last observation); `browser_wait_for`
+  waits for dynamic content by condition (element present/hidden,
+  text present, URL/title contains — driver-level condition
+  waits, never a fixed sleep) and times out with a structured
+  error; `browser_screenshot` captures a PNG of the page to
+  disk.  Observation outputs carry an `observation` summary
+  that the Executor records in `AgentState` alongside the tool
+  result, so what the agent saw is part of the task record.
+  Pages the site itself opens (popups/new-window links) are
+  adopted as regular tabs and appear in `browser_list_tabs`.
+  A failed observation is an error — never an empty "success".
+
+```python
+agent.execute_tool("browser_launch", {})
+agent.execute_tool("browser_navigate", {"url": "https://example.com"})
+page = agent.execute_tool("browser_current_page", {})
+page.output  # {"tab_id": "tab_1", "url": "https://example.com/", "title": "Example Domain"}
+found = agent.execute_tool("browser_find_elements", {"role": "button", "name": "Sign in"})
+agent.execute_tool("browser_click", {"ref": found.output["elements"][0]["ref"]})
+agent.execute_tool("browser_type", {"selector": "#username", "text": "afnan"})
+obs = agent.execute_tool("browser_observe_page", {})
+shot = agent.execute_tool("browser_screenshot", {})
+shot.output["path"]  # screenshots/screenshot_20261005_....png
+```
+
+Unit tests (fake in-memory backend) live in
+`tests/test_browser_controller.py`; interaction tests (login-form
+DOM: successful interactions, element-not-found, stale/invalid
+element, timeout and execution-failure cases) live in
+`tests/test_browser_interactions.py`; observation tests (page
+state, dynamic-content waits, popup adoption, screenshot
+recording in AgentState) live in
+`tests/test_browser_observation.py`; registry/Agent integration
+tests live in `tests/test_browser_tools.py`;
+`tools/check_compatibility.py` verifies the browser tools exist
+and that driver code stays inside `afnan_ai/browser/`.
+
+## Reliability: state-grounded verification + recovery
+
+Browser success is not trusted blindly; it is confirmed against
+the page itself:
+
+- **Post-action confirmation** — `BrowserReliability` (in
+  `afnan_ai/browser/reliability.py`) is wired into the Verifier's
+  generic observation-provider hook. After every `browser_*`
+  step, the Verifier judges the expected result against a fresh
+  `browser_observe_page` snapshot (URL, title, text, elements) —
+  a click that "succeeds" but leaves the page unchanged is
+  **failed/uncertain**, not verified. Non-browser steps are
+  untouched, and the Verifier stays browser-agnostic (enforced
+  by `tools/check_compatibility.py`).
+- **Structured recovery strategies** — on a failed/uncertain
+  browser step, the failure advisor classifies the problem
+  (navigation failure, element-not-found, timeout, stale
+  element, invalid tab, unexpected popup/new tab, page-state
+  mismatch) and records a strategy in AgentState with the
+  verification: relocate from the observed elements (with
+  candidate locators taken from the real page), wait for a
+  condition before acting, re-find after the page changed,
+  adopt/select the popup tab, choose a new route, and so on.
+- **Replanning, never blind repetition** — the advice and the
+  observed page travel with the verification into AgentState,
+  so the existing RecoveryManager/Planner generate an
+  alternative action; a recovery plan that repeats the failed
+  action (same tool + same arguments) is rejected and never
+  executed, and recovery stays within the existing attempt and
+  iteration limits.
+
+End-to-end tests (successful sign-in, failure → recovery →
+completion, blind-repeat rejection, navigation-failure
+recovery, unexpected-popup recovery, dynamic-content wait) live
+in `tests/test_browser_reliability.py`.
+
+## Afnan Browser Runtime (Phase 3 foundation)
+
+The agent never depends on a browser automation library.  The
+layering is:
+
+```
+Afnan Agent → Browser Tools → BrowserController
+    → AfnanBrowserRuntime → BrowserEngineAdapter
+    → ChromiumAdapter → Chromium            (current)
+    → PlaywrightAdapter → Chromium          (fallback / development)
+    → Native Afnan Chromium Adapter         (future)
+        → Customized Afnan Browser
+```
+
+- **`ChromiumAdapter`** (`afnan_ai/browser/chromium_adapter.py`)
+  is the current engine: it launches a Chromium-family browser
+  (Chromium, Chrome or Edge — set `AFNAN_CHROMIUM_EXECUTABLE`
+  to choose the binary) and drives it over the Chrome DevTools
+  Protocol using only the Python standard library.  Each Afnan
+  profile is its own Chromium process with its own
+  user-data directory, so profiles (persistent or isolated)
+  never share cookies/storage; tabs, navigation, screenshots,
+  element interaction and page observation all flow through
+  CDP, with accessibility from the modern CDP Accessibility
+  domain (the same normalized tree the Playwright adapter
+  produces from `aria_snapshot()`).  The debug port binds to
+  127.0.0.1 only, and profile data is never read back into
+  AgentState, logs or screenshots.
+- **`PlaywrightAdapter`** (`afnan_ai/browser/backend.py`) is
+  preserved as the fallback/development adapter
+  (`BrowserBackend`/`PlaywrightBackend` remain as compatibility
+  aliases).  Both adapters return identical normalized results
+  — `tests/test_chromium_adapter.py` runs the same controller
+  workflow through both and through a fake adapter and compares
+  the observations.  Swapping engines (including the future
+  native Afnan Chromium build) means implementing
+  `BrowserEngineAdapter` once; runtime, controller, tools,
+  Planner, Executor, Verifier and Recovery stay untouched.
+
+- **`AfnanBrowserRuntime`** (`afnan_ai/browser/runtime.py`) is
+  the actual owner of browser state: lifecycle
+  (start/stop/restart/connect), the engine-level session
+  (session id, active profile, tab records with URLs/titles),
+  persistent profiles (a registry + per-profile storage
+  directories under a runtime dir; credential-shaped
+  preferences are stripped and never logged), session
+  persistence (`session.json`, redacted, reloadable after a
+  restart), an event stream (`browser_started`, `tab_created`,
+  `navigation_completed`, `popup_detected`,
+  `download_completed`, `browser_crashed`, ... — subscribable
+  and logged, ready for AgentState consumers), capability
+  discovery (Afnan-level names via the `browser_capabilities`
+  tool — never raw engine features), and crash detection +
+  recovery: a dead engine flips the session to `crashed`,
+  `recover()` restarts it and reports the recoverable tabs
+  instead of blindly restarting the task.  By default the
+  agent gives the runtime a persistent home
+  (`~/.afnan-ai/browser-runtime`, override with
+  `browser_runtime_dir=` / `AgentConfig.browser_runtime_dir` /
+  `AFNAN_BROWSER_RUNTIME_DIR`), so profiles and session state
+  survive restarts; supplying your own controller keeps full
+  control.
+- **`BrowserEngineAdapter`** (`afnan_ai/browser/engine.py`) is
+  the only interface an engine implements; handles stay opaque
+  and no engine types cross it.  **`ChromiumAdapter`** is the
+  default implementation (real Chromium via CDP);
+  **`PlaywrightAdapter`** (`backend.py`) is the fallback
+  (Chromium via Playwright, persistent profile contexts
+  included); `BrowserBackend`/`PlaywrightBackend` remain as
+  compatibility aliases.  The runtime also exposes runtime
+  health (`runtime.health()` — engine alive, session valid,
+  active tab, page responsive), tab↔task association and a
+  permission extension point (`check_permission` with
+  normal/sensitive/destructive/approval_required levels; human
+  approval itself stays with the controller's ApprovalGate).
+- **Models** (`afnan_ai/browser/models.py`) — `BrowserSession`,
+  `BrowserProfile`, `BrowserTab`, `BrowserWindow`,
+  `BrowserPage`, `BrowserObservation`, `BrowserElement`,
+  `BrowserAction`, `BrowserResult`: engine-independent,
+  serializable records; AgentState and checkpoints only ever
+  hold these (URLs redacted), never engine objects.
+- **Errors** are Afnan codes end to end: `browser_unavailable`,
+  `startup_failed`, `navigation_failed`, `tab_not_found`,
+  `element_not_found`, `timeout`, `browser_crashed`,
+  `session_expired`, `profile_error`, `unsupported_operation`.
+  Engine exceptions never leak past the adapter/runtime
+  boundary, and the runtime never executes model-generated
+  code.
+
+Tests: `tests/test_browser_runtime.py` drives a purpose-built
+`FakeBrowserAdapter` (startup, tabs, navigation, events,
+profiles, sessions, crash recovery, serialization, controller
+and AgentState integration) with no real browser launched
+(41 browser tools total).  `tests/test_chromium_adapter.py`
+covers the ChromiumAdapter against a fake CDP connection,
+runs real-Chromium integration tests (launch, navigation,
+tabs, screenshots, profile persistence, restart, crash
+recovery) when a Chromium binary is installed, and compares
+the normalized controller output of the Chromium, Playwright
+and fake adapters.
+
+## Browser Perception & Computer Use
+
+On top of the runtime sits the unified perception layer
+(`afnan_ai/browser/perception.py`) — the agent no longer sees
+"a page to automate" but one structured computer environment:
+
+```
+Browser Runtime → Unified Observation (accessibility → DOM → visual)
+    → Locate → Validate → Act → Fresh Observation → Verify
+```
+
+- **`browser_perceive`** returns one serializable
+  `UnifiedObservation`: URL, title, visible text, dialogs,
+  loading state and unified elements.  Every element — whether
+  the accessibility tree, the DOM or pixel detection found it —
+  carries the same identity: `element_id`, role, accessible
+  name, text, locator/frame/tab context, bounding box,
+  visibility/enabled/editable state, a confidence score and
+  its `source` (`accessibility` | `dom` | `visual`).
+  Accessibility information is always preferred; DOM fills the
+  gaps; the ScreenObserver's visual detection is only the
+  fallback (canvas UIs, visual-only controls), and never
+  silently outranks structured data.
+- **`browser_locate`** resolves natural-language targets
+  ("Login button", "Search box", "Email field") into ranked
+  candidates.  Low-confidence candidates expose no
+  `element_id`, so they cannot be acted on; mid-confidence
+  targets are routed through the human approval gate before
+  anything executes.
+- **`browser_computer_act`** performs one validated action —
+  click, double-click, type, clear, select, check/uncheck,
+  press_key, hotkey, scroll, mouse_move, drag, focus, hover —
+  through the BrowserController.  Before acting it verifies
+  the right tab, that the target still exists and is usable,
+  and that its identity is unchanged; stale or wrong-tab
+  targets are refused structurally.  Coordinate actions exist
+  only as the visual fallback (element bounding-box centers),
+  behind the same challenge guard and approval gate.  Every
+  result carries a *fresh* observation with `page_changed`,
+  `target_still_exists` and expectation checks — executing an
+  action is never itself treated as task success; the
+  Verifier judges the observed outcome.  Before/after
+  observation summaries land in AgentState through the usual
+  tool-result recording, with sensitive values redacted.
+- Element ids are stable across re-observations of an
+  unchanged page (fresh refs and state underneath), and go
+  stale the moment their element vanishes — dynamic pages,
+  SPA navigation and modal changes are handled by
+  re-observation, never by fixed sleeps.
+
+Tests: `tests/test_browser_perception.py` (unified
+observation, AX preference, DOM fallback, semantic location,
+the full action set, stale/wrong-tab refusal, confidence
+gating with and without approval, visual fallback, multi-tab
+safety, tool-level workflows and AgentState recording).
+
+## Real-time autonomous AgentLoop
+
+Long tasks are not executed as one static plan.  The
+`AgentLoop` (`afnan_ai/agent_loop.py`) runs a continuous
+cycle on top of the existing Planner/Executor/Verifier/
+RecoveryManager:
+
+```
+Observe → Decide (next action / small batch) → Validate →
+Execute → Fresh Observation → Verify → Continue / Replan /
+Recover / Ask Human → Completion
+```
+
+- Every cycle re-observes (the browser perception layer when
+  a browser page is available) and the Planner sees a compact
+  decision context: the goal, verified-completed work (never
+  repeated), recent failures, the previous action/result, the
+  current page/tab — with page content explicitly labelled
+  *untrusted data*.  Batch remainders are discarded after each
+  batch; a changed environment is always re-decided from
+  fresh state.
+- Actions are validated before execution (unknown tools are
+  rejected structurally), sensitive actions run only through
+  the existing approval gate — an approval refusal *pauses*
+  the task (checkpointed, resumable) instead of burning
+  recovery attempts.
+- Completion requires verified evidence: the Planner
+  reporting "done" with zero verified steps is rejected, and
+  a second evidence-free claim ends the task as
+  `completion_without_evidence`, never as success.
+- No-progress detection (unchanged observation + no new
+  verified work), identical-action limits and repeated-error
+  handling force replans and then a safe stop; limits cover
+  steps, time, LLM calls, replans, recovery attempts,
+  identical actions and browser actions.
+- Prompt-injection defense: instruction-like text in webpage/
+  document/search content is recorded as a structured security
+  observation (and a `security_warning` event) and never
+  followed.
+- Checkpoints are written during the loop;
+  `run_agent_loop(goal, resume_from=checkpoint)` restores the
+  state and never re-executes verified steps.  A
+  `LoopControl` (pause/stop flags) plus structured progress
+  events (`task_started`, `observation_received`,
+  `decision_created`, `action_*`, `verification_completed`,
+  `recovery_started`, `replan_started`, `approval_required`,
+  `checkpoint_created`, `task_completed/failed/paused`) form
+  the foundation for a future background worker + Activity
+  UI.  The full redacted trajectory (goal → observation →
+  decision → action → result → verification) is kept in
+  AgentState.
+
+Entry points: `agent.run_agent_loop(...)` /
+`main.run_agent_loop(...)`, `agent.get_agent_loop()`;
+`Orchestrator.run_loop` delegates to the same loop.  Tests:
+`tests/test_agent_loop.py`.
+
+## Persistent memory, goals and long-running tasks
+
+Long-term state lives outside the (temporary) AgentState in
+three persistent, replaceable stores under `~/.afnan-ai/`
+(configurable via `memory_dir=`):
+
+- **MemoryStore** (`afnan_ai/memory_store.py`): long-term
+  memory — user preferences, verified facts, project context,
+  past task summaries.  Every record carries source,
+  timestamp, confidence and metadata; retrieval ranks by
+  relevance + confidence + recency.  Only trusted sources
+  (the user, verified agent results, system configuration)
+  may write: webpages, emails and other untrusted content can
+  never create memory directly, content containing secret
+  material (passwords, tokens, API keys, cookies) is refused
+  outright, and conflicts are resolved by confidence/source
+  authority — never blindly overwritten.  The backend is an
+  interface; the shipped implementation is a local
+  atomic-JSON store that degrades to empty on corruption
+  instead of crashing the agent.
+- **GoalManager** (`afnan_ai/goal_manager.py`): persistent
+  goals with status, priority, milestones, dependencies,
+  completion criteria and linked tasks; progress is computed
+  from verified milestones only.
+- **TaskManager + TaskWorker** (`afnan_ai/task_manager.py`):
+  a persistent task queue (pending / running / paused /
+  waiting_for_approval / completed / failed / cancelled) with
+  retry budgets, timeouts and checkpoint references.  A
+  process restart recovers `running` tasks as `paused` —
+  resumable, never auto-executed.  The worker runs tasks
+  through the AgentLoop only when explicitly invoked
+  (`run_pending` / `resume_task`); it starts no background
+  execution by itself, and approval-needed outcomes park the
+  task as `waiting_for_approval`.
+
+The AgentLoop loads relevant memories + active goals into
+every decision cycle (stored memories containing
+instruction-like text are excluded as prompt-injection
+defense), and on completion promotes only the verified
+outcome to a `task_summary` memory and records verified
+progress against the linked goal.  Entry points:
+`agent.get_memory_store()` / `get_goal_manager()` /
+`get_task_manager()` / `get_task_worker()` (and the `main`
+delegates).  Tests: `tests/test_memory_goals_tasks.py`.
+
+## Background execution and scheduling
+
+`afnan_ai/scheduler.py` + `afnan_ai/background_runner.py`
+turn the persistent queue into a Muse-style background
+agent:
+
+- **TaskScheduler** is pure-stdlib and platform-independent
+  (Windows/Linux/macOS identical): one-time and recurring
+  (`interval` seconds, `daily` at a time of day, `weekly`
+  on a weekday) schedules, all UTC, advancing from their
+  scheduled time so missed occurrences never burst.  A due
+  schedule simply creates a pending TaskManager task —
+  execution always goes through the runner and AgentLoop.
+- **BackgroundTaskRunner** claims tasks and runs each
+  through a *fresh* AgentLoop (per-task isolation),
+  forwarding loop events into a redacted JSONL audit trail
+  (`audit.jsonl`; secrets are scrubbed by the shared
+  redactor before anything is written).  Human approval is
+  inherited, never bypassed: approval-needed outcomes park
+  the task as `waiting_for_approval`; per-task timeout/step
+  budgets become LoopLimits; the TaskManager retry budget
+  and the loop's stall guards prevent blind repetition.
+- **Crash/restart recovery:** on start, tasks left
+  `running` by a dead process are recovered and re-queued
+  with their checkpoint reference, so the loop resumes from
+  the last valid checkpoint (checksum-invalid checkpoints
+  are detected and the task starts fresh, noted in the
+  audit trail).  Completed steps are never re-executed.
+- Nothing runs on its own: `start_background_runner()` is
+  an explicit opt-in, `process_available()` drains the
+  queue synchronously (tests, cron-style use), and
+  `stop_background_runner()` shuts down cleanly.  Entry
+  points: `agent.get_scheduler()` / `get_background_runner()`
+  / `start_background_runner()` / `stop_background_runner()`
+  (and the `main` delegates).  Notification, webhook,
+  email/calendar-trigger and cloud-worker integrations plug
+  in at the scheduler/runner event seam.  Tests:
+  `tests/test_background_scheduler.py`.
+
+## Computer Use: desktop control outside the browser
+
+`afnan_ai/computer/` adds a Muse-style desktop layer with
+the same layering as the browser stack:
+
+    AgentLoop -> Tools -> ComputerController -> ComputerBackend
+
+- **ComputerBackend** is the platform-independent interface
+  (mouse, keyboard, windows, applications, screenshots,
+  accessibility metadata).  The shipped
+  `CommandComputerBackend` drives each OS's own tools —
+  xdotool/wmctrl on Linux, osascript/cliclick on macOS,
+  PowerShell user32 on Windows — with no third-party
+  dependency; missing tools surface as structured
+  `backend_unavailable` errors, and a native backend can be
+  swapped in behind the same interface.
+- **ComputerController** fuses window state, accessibility
+  metadata and ScreenObserver visual detections into one
+  structured `ComputerObservation` (raw screenshots never
+  enter state or logs), locates semantic targets ("Save
+  button", "Chrome address bar", "Settings window") with
+  confidence scores, and runs every action as Observe →
+  Validate → Execute → Observe Again → Verify.  Blind
+  coordinate clicking is not a strategy: coordinates need a
+  validated element or explicit human approval, actions on
+  the wrong window are refused, stale targets fail
+  structurally, low-confidence targets are never actionable
+  and uncertain ones require approval.  Closing
+  applications, destructive hotkeys, typing into password
+  fields (the secret is never echoed) and file
+  moves/renames/overwrites go through the fail-safe
+  human-approval gate (`agent.set_computer_approver()`).
+- **Tools**: `computer_observe/locate/click/type/key_press/
+  hotkey/scroll/drag/move_mouse/focus_window/open_application/
+  close_application/list_applications/screenshot/
+  wait_for_ui_change` plus `file_list/create_folder/copy/
+  move/rename/open/save_text/find_downloads`, all in the
+  same ToolRegistry, so one AgentLoop task can research in
+  the browser, detect the downloaded file, process it in a
+  desktop application and verify the result.  Disable with
+  `enable_computer_tools=False`; inject a backend with
+  `computer_backend=`.  Tests: `tests/test_computer_use.py`.
+
+## Connector System: external services (Muse-style)
+
+`afnan_ai/connectors/` lets the agent work with external
+services — email, calendar, cloud storage, Slack-style chat,
+Notion-style project management, Canva-style design tools,
+GitHub, CRM/business tools — through one generic,
+extensible foundation.  No real third-party integration is
+hard-coded: adding a service means subclassing `Connector`
+and registering it; core agent code never changes.
+
+    User Goal
+      ↓ AgentLoop
+      ↓ Available Tools + Connectors
+      ↓ Planner / Decision
+      ↓ Permission & Risk Validation
+      ↓ Connector Operation
+      ↓ Result Observation
+      ↓ Verifier
+      ↓ Memory / Goal Update
+      ↓ Next Action / Completion
+
+- **Connector interface** (`base.py`): unique id, name,
+  description, `AuthType` (none / api_key / oauth2 / session),
+  declared scopes and `OperationSpec`s (name, description,
+  risk level, required scopes, parameter schema).  Lifecycle:
+  `authenticate` → `connect` → `refresh_session` →
+  `health_check` → `disconnect`, plus one generic
+  `execute_operation`.  Connector implementations stay
+  completely separate from the core agent.
+- **ConnectorRegistry** (`registry.py`): dynamic
+  register/unregister/discover (installed distributions can
+  contribute connectors via the `afnan_ai.connectors`
+  entry-point group — best-effort, never breaks startup).
+  `capabilities_schema()` gives the Planner/AgentLoop the
+  structured schema (operations, risk levels, scopes,
+  parameter schemas); unknown connectors and unsupported
+  operations are structured errors.
+- **Authentication & secrets** (`auth.py`,
+  `credentials.py`): OAuth2/API-key/session live inside the
+  abstraction.  Secrets live *only* in a `CredentialStore`
+  (in-memory default, env-var reader, or a real vault you
+  plug in) — never in `AgentState`, `MemoryStore`, planner
+  output, checkpoints or logs.  Credentials are provided via
+  `service.provide_credentials()` (secure Python channel,
+  never tool arguments); connectors receive them transiently
+  in the per-call `OperationContext`.  Expired sessions are
+  refreshed once, transparently, then retried once.
+- **Permission model** (`policy.py`): every operation is
+  risk-classified — `read`, `low_risk_write`,
+  `sensitive_write`, `irreversible_destructive`.  Scopes are
+  least-privilege: an operation runs only when its required
+  scopes were explicitly granted
+  (`service.grant_scopes()`).  Sensitive/irreversible
+  operations run only with explicit human approval through
+  the fail-safe `ConnectorApprovalGate`
+  (`agent.set_connector_approver()`; without an approver they
+  are refused, never defaulted).  A `RiskPolicy` can block a
+  risk level entirely.
+- **Reliability** (`service.py`, `errors.py`): timeouts,
+  rate limits, expired auth, permission denied, network
+  failures, malformed responses and outages become
+  structured `ConnectorError`s with a `retryable` hint.  The
+  existing RecoveryManager handles replanning; failed
+  operations are never blindly repeated (the service makes
+  exactly one attempt per call, plus one refresh-retry).
+- **Audit trail** (`audit.py`): every operation records
+  connector, operation, risk, timestamp, approval status,
+  execution result and verification result — redacted — to
+  memory and `<memory_dir>/connector_audit.jsonl`.
+- **Agent integration**: six `connector_*` tools
+  (`list/capabilities/connect/disconnect/health_check/execute`)
+  in the same ToolRegistry; the AgentLoop's decision context
+  gains a compact connector section via a generic
+  `system_context_provider` hook (no connector-specific
+  orchestration in the loop); the Verifier gets fresh safe
+  connector observations.  AgentState stores only safe
+  metadata (connector, operation, status, redacted summary,
+  timestamps, verification status).  A multi-step workflow —
+  read email → identify info → create calendar event (human
+  approval if required) → verify — runs through the normal
+  AgentLoop flow.  Disable with
+  `enable_connector_tools=False`; inject a registry with
+  `connector_registry=`.  Tests:
+  `tests/test_connectors.py` (44 tests, mock email/calendar/
+  flaky connectors — no external services needed).
+
+## Long-Context & Trajectory Reasoning
+
+`afnan_ai/context/` gives long-running tasks a unified,
+budgeted working memory without turning into a second
+orchestration layer:
+
+    Goal
+      ↓ ContextManager
+      ↓ Observe + Relevant History
+      ↓ Decide
+      ↓ Validate
+      ↓ Execute
+      ↓ Verify
+      ↓ Trajectory Update
+      ↓ Context Compression
+      ↓ Memory / Goal Update
+      ↓ Next Decision / Recovery / Completion
+
+- **ContextManager** (`manager.py`) holds the goal, active
+  sub-goal, relevant memory, recent observations, previous
+  actions, tool results, verification results,
+  failures/recovery attempts (each with a "try instead"
+  hint), approvals, decisions, facts and constraints in one
+  place.  It never plans or executes — it records what the
+  AgentLoop did and answers "what is relevant for this
+  decision?".
+- **No unbounded growth** (`models.py`): a configurable
+  `ContextBudget` (context chars, recent-detail window,
+  compression threshold, item caps, retrieval limit,
+  trajectory/retention caps).  Old detail compresses into
+  one rolling evidence-based summary; facts, constraints,
+  decisions and failures are always preserved.
+- **TrajectoryStore** (`trajectory.py`): every task's
+  trajectory (observation/decision/action/result/
+  verification/recovery/approval/checkpoint, each with a
+  trust zone) is persisted per task id under
+  `<memory_dir>/trajectories.json` and recovered after
+  restarts; retention keeps only recent finished tasks.
+- **Intelligent retrieval** (`retrieval.py`): each cycle
+  pulls only relevant history — deterministic scoring over
+  tag overlap, recency, importance and past usefulness.
+  Irrelevant old history never reaches the Planner.
+- **Decision continuity**: the Planner sees what is
+  completed (never repeat), pending, failed (with what to
+  try instead) and which sub-goal is active.  Complex tasks
+  decompose into dynamic sub-goals; a failed step's
+  sub-goal retries on the next plan instead of restarting
+  the whole task, and recovery briefs carry previous
+  attempts, failure reasons and kept partial progress.
+- **Model context safety** (`safety.py`): every prompt
+  section is trust-zone labeled — trusted system/user
+  instructions, the agent's own state, tool observations,
+  and quarantined untrusted external content (explicit
+  delimiters, trusted sections first, truncation cuts the
+  untrusted tail first).  Prompt-injection findings are
+  reported, never obeyed.
+- **Evidence-based summaries** (`summarizer.py`): completed
+  work, remaining work, discoveries, constraints, failures,
+  decisions, facts and next objective — built only from
+  recorded entries, never a model call.  `add_fact` accepts
+  `user`/`verified_result` sources only, so the model
+  cannot invent facts into context.
+- **AgentLoop integration**: per-run `ContextManager`
+  (factory-injected — the loop never imports the package),
+  trace mirroring into the store, sub-goal sync from plans,
+  recovery briefs in replan notes, zoned relevant-history
+  section in the decision context, and an end-of-run
+  summary + resumable snapshot in task metadata
+  (`context_summary`, `context_snapshot`).  Disable the
+  per-run manager by omitting the factory; inject a budget
+  with `AfnanAgent(context_budget=...)`; read trajectories
+  with `agent.get_trajectory_store()` (main delegate
+  included).  Tests: `tests/test_context_reasoning.py`
+  (29 tests).
+
+## Dynamic Tool & Skill Builder
+
+`afnan_ai/skills/` lets the Agent turn required capabilities
+into reusable skills — composed from existing tools, never
+from arbitrary model-generated code:
+
+    User Goal
+      ↓ Capability/Skill Discovery
+      ↓ Existing Skill?
+      ├─ Yes → Validate → Execute
+      └─ No → Compose/Create → Sandbox Test → Verify → Register
+      ↓ AgentLoop
+      ↓ Observe → Decide → Validate → Execute → Verify
+      ↓ Skill Result
+      ↓ Trajectory + Memory + Skill Version
+      ↓ Next Action / Completion
+
+- **Skill** (`models.py`) — skill_id, name, description,
+  risk level, input/output schemas, version, dependencies,
+  execution steps, verification criteria.  A Skill is never
+  a Tool subclass; responsibilities stay separate.
+- **SkillRegistry** (`registry.py`) — dynamic
+  register/discover/update/version/disable, structured
+  descriptions for the Planner, dependency checks (missing
+  dependency fails fast with a structured error), audit
+  trail.  New versions validate *before* replacing the
+  active one; failed updates keep the stable version;
+  `rollback()` restores any previous version.
+- **Composition** (`composer.py`) — combine tools into a
+  workflow (e.g. search → open → extract → compare →
+  draft → save) with `{{input.*}}` / `{{steps.*}}`
+  templating; every step validates against the real tool
+  schemas at build time.
+- **Generation** (`generator.py`) — identify capability →
+  search existing tools/skills → generate a composition →
+  strict validation → risk analysis → sandbox validation →
+  explicit registration.  The model never executes code;
+  drafts are data until a human/developer registers them
+  (approval required for sensitive+ risk).
+- **Sandbox** (`sandbox.py`) — static validation for
+  composed skills; the human-gated code-skill path runs in
+  an isolated subprocess (scrubbed env, temp cwd, blocked
+  imports, no `open`/`eval`, wall-clock timeout, CPU/memory
+  limits).  Best-effort against accidents, not a boundary
+  against determined attackers — hence the approval gate.
+- **Learning** (`learner.py`) — repeated *verified*
+  workflows become versioned *candidates* with provenance;
+  failed workflows never qualify, and candidates carry
+  tool names only (no external text, no model assumptions).
+  Promotion stays explicit and audited.
+- **Execution** (`executor.py`) — skills run through the
+  normal `ToolRegistry.execute` path via the `SkillTool`
+  adapter (`skill_<id>` tools the Planner picks directly),
+  so there is no separate orchestration loop.  Risk levels
+  (read-only / reversible / sensitive / destructive) route
+  through the existing human-approval mechanism — no
+  approver means sensitive skills do not run, and the loop
+  pauses resumably on `approval_required`.
+- **Security** — injection scans and secret scans at
+  registration; skills can only invoke already-registered
+  tools (no privilege escalation); sub-skill risks resolve
+  against the registry with cycle/depth guards.
+- **Agent wiring** — `AfnanAgent` builds the registry,
+  learner, generator and executor; `get_skill_registry()`,
+  `get_skill_learner()`, `get_skill_generator()`,
+  `set_skill_approver()`, `register_skill_tools()` (plus
+  `main` delegates); the AgentLoop receives the learner by
+  injection and lists skills in its decision context.
+  Tests: `tests/test_skill_builder.py` (49 tests).
+
+## Multi-agent / subagents
+
+`afnan_ai/subagents/` divides complex goals into
+specialized, least-privilege subagents — each one runs the
+*existing* AgentLoop against a scoped tool view, so there
+is no new orchestration layer:
+
+    User Goal
+      ↓ Central Agent
+      ↓ Task Decomposition
+      ↓ Subagent Manager
+      ├── Research Agent
+      ├── Browser Agent
+      ├── Computer Agent
+      ├── Data/File Agent
+      └── Verification Agent
+      ↓ Controlled Results
+      ↓ Central Verification
+      ↓ Merge Results
+      ↓ Goal Completion
+
+- **SubAgentSpec** (`models.py`) — subagent_id, role,
+  objective, allowed tools/connectors, context scope, risk
+  permissions, status, result, verification state, plus
+  `ResourceLimits` (max steps, timeout, tool-call budget,
+  retry limit, context budget).  Roles
+  (`researcher`, `browser_agent`, `computer_agent`,
+  `data_analyst`, `file_agent`, `verifier_agent`,
+  `planner_agent`) are permission bundles, never hard-coded
+  workflows.
+- **SubAgentManager** (`manager.py`) — create/start/pause/
+  resume/cancel/terminate; each subagent gets an isolated
+  AgentState and the minimal context (objective, relevant
+  memory, constraints) — never the parent's full state.
+  Independent subagents run in parallel threads;
+  `depends_on` gives topological levels, and a failed
+  dependency fails its dependents fast with a structured
+  reason.  Results return as structured handoffs that the
+  parent verifies instead of trusting; retries are bounded
+  and never blindly repeat a failed strategy.
+- **ScopedToolRegistry** (`scoped_registry.py`) —
+  read-only least-privilege view: exact/`prefix_*` tool
+  allow-listing, risk-permission checks on every call,
+  per-connector filtering for `connector_execute`,
+  tool-call budgets, and no registration.
+- **ResourceLockManager** (`locks.py`) — named exclusive
+  locks (`browser:tab:<id>`, `file:<path>`,
+  `connector:<id>`) so parallel subagents cannot corrupt
+  shared state; acquisition times out with a structured
+  `resource_conflict` instead of deadlocking.
+- **TaskDecomposer** (`decomposition.py`) —
+  `should_decompose()` decides single vs multi-agent;
+  `decompose()` maps goal phases to role specs with
+  dependency ordering (researchers in parallel → verifier
+  → document agent); `decompose_plan()` splits an existing
+  plan by tool domain.
+- **HandoffVerifier** (`handoff.py`) — checks output
+  presence, evidence, confidence, contradictions and
+  injection markers; marks handoffs verified/failed/
+  uncertain.  Only verified handoffs merge.
+- **SubAgentMailbox** (`communication.py`) —
+  parent-mediated messaging only; no direct or hidden
+  channels; payloads are injection-scanned and audited.
+- **SubAgentSecurity** (`security.py`) — creation-time
+  validation: permissions never exceed the parent's
+  (unknown tools/connectors and risk escalation rejected),
+  objectives/constraints scanned for injection, scoped
+  minimal context with UNTRUSTED-DATA labeling, no
+  credential sharing, generated code stays under the Skill
+  Builder sandbox rules.
+- **Approval flow** — a subagent can never approve
+  independently: approval pauses surface as
+  `waiting_for_approval`, and the parent resolves via
+  `resolve_approval()` (Subagent → Parent → Human →
+  resume from checkpoint).
+- **Audit** — `get_execution_graph()` keeps the full
+  parent→subagents→actions→results tree; every lifecycle
+  event lands in a JSONL audit trail.
+- **Agent wiring** — `AfnanAgent.get_subagent_manager()`
+  (plus the `main` delegate); `_build_subagent_loop()`
+  reuses Planner/Executor/Verifier/RecoveryManager/
+  AgentLoop with the scoped registry.  Tests:
+  `tests/test_subagents.py` (41 tests).
+
+## Artifact System
+
+`afnan_ai/artifacts/` turns research and task results into
+real, usable deliverables — documents, reports, PDFs,
+spreadsheets, presentations, images, HTML pages, structured
+data and code output — without duplicating the AgentLoop:
+
+    User Goal
+      ↓ Agent / Subagents
+      ↓ Research + Tools + Connectors + Computer
+      ↓ ArtifactManager
+      ↓ Draft / Version
+      ↓ Verifier + Evidence Check
+      ↓ Verified Artifact
+      ↓ Workspace / Export / User
+
+- **Artifact model** — id, name, extensible type, description,
+  source task / project / goal, version, status, file
+  reference, timestamps and verification state
+  (`verified` / `failed` / `uncertain` / `unverified`).
+- **Controlled generation** — `builders.py` turns *data* into
+  bytes (Markdown, sanitized HTML, stdlib-only PDF, CSV,
+  JSON, text, slide decks, PNG charts).  The agent never gets
+  direct filesystem or code execution to make artifacts;
+  every write is secret-redacted first.
+- **ArtifactManager** — create / read / update / version /
+  rename / duplicate / export / archive / delete, with
+  atomic writes, SHA-256 checksums, and per-artifact locks.
+  Parallel subagents share the manager safely; stale writers
+  get a structured `version_conflict` instead of silent
+  corruption.
+- **Versioning** — every meaningful update creates a new
+  version; previous versions stay readable and traceable; a
+  failed update restores the previous stable version.
+- **Verification** — `ArtifactVerifier` inspects the actual
+  output (exists, checksum, format magic bytes, expected
+  content, required sections, size constraints) and returns
+  `verified`, `failed` or `uncertain`.  Only verified
+  results merge into the final deliverable.
+- **Evidence tracking** — per-claim source references; new
+  sources start unverified and are never auto-marked —
+  model-generated facts stay separate from verified
+  evidence.
+- **Workspace** — per-project homes
+  (`research/`, `drafts/`, `final_reports/`, `supporting/`);
+  artifacts associate with task, project and goal ids.
+- **Security** — secrets redacted on write; destructive
+  operations (delete, sensitive export) follow the existing
+  human-approval rules (no approver → `approval_required`,
+  never silent); external page content is data, never
+  generation instructions.
+- **Background-safe** — incremental `update()` calls plus
+  `checkpoint_ref()` let long-running TaskManager jobs
+  resume after crash/restart; incomplete work is never
+  marked verified.
+- **Agent wiring** — `AfnanAgent.get_artifact_manager()`
+  (plus the `main` delegate); `artifact_*` tools let the
+  normal AgentLoop decide when a deliverable is useful —
+  no second orchestration loop.  Tests:
+  `tests/test_artifacts.py` (26 tests).
+
+## Proactive intelligence & ideas
+
+`afnan_ai/proactive/` is a controlled intelligence layer —
+not a replacement for the central agent.  It watches
+authorized state and surfaces evidence-based suggestions:
+
+    User / Environment State
+      ↓ ProactiveEngine
+      ↓ Opportunity Detection
+      ↓ Relevance + Confidence + Risk
+      ↓ Idea
+      ↓ User Approval / Allowed Auto-Action
+      ↓ TaskManager
+      ↓ AgentLoop
+      ↓ Execute + Verify
+      ↓ Goal / Memory / Artifact Update
+
+- **Idea model** — id, title, description, reason,
+  related goal/task, evidence, confidence, priority,
+  suggested action, risk level, timestamps, and status
+  (`new` / `dismissed` / `accepted` / `scheduled` /
+  `completed` / `failed` / `expired`).
+- **Suggestion types** — unfinished tasks, goal progress,
+  follow-ups, recurring workflows, research opportunities,
+  project improvements, missed dependencies, upcoming
+  deadlines, automation opportunities.  Every suggestion is
+  evidence-backed; nothing is generated from unsupported
+  assumptions.
+- **Controlled behavior** — the engine never executes.
+  Default flow is Detect → Suggest → Risk/Permission check →
+  Notify → User accepts → Task created → AgentLoop executes
+  → Verify.  Read-only low-risk auto-execution exists but is
+  off by default; sensitive/irreversible actions always need
+  human approval (no approver → `approval_required`).
+- **Timing intelligence** — per-opportunity cooldown,
+  signature dedup, relevance threshold, quiet hours, and a
+  cap on suggestions per period.  Goal-linked ideas get a
+  priority boost from the user's active goals.
+- **Boundaries** — only authorized sources (goals, tasks,
+  schedules, memories, activity), user-controllable scope
+  and enable/disable; external emails/pages/documents are
+  never treated as instructions; injection-shaped text is
+  withheld and secrets are redacted from suggestions.
+- **Background + offline** — `run_sweep()` evaluates
+  periodically, expires stale ideas, and persists the queue
+  so suggestions survive offline and show next session.
+- **Feedback loop** — accepted/dismissed/ignored/completed/
+  failed tune future ranking; inferred preferences are never
+  written to memory.
+- **Agent wiring** — `AfnanAgent.get_proactive_engine()`
+  (+ `set_proactive_approver()`, `run_proactive_sweep()`,
+  `main` delegates).  Tests: `tests/test_proactive.py`
+  (29 tests).
+
+## Security, Permissions & Audit Center
+
+`afnan_ai/security/` is the single mandatory security
+layer for browser, computer use, files, connectors,
+skills, subagents, background tasks and artifacts.  No
+subsystem invents its own policy — every tool call on the
+agent's registry is authorized through the center:
+
+    User Goal
+      ↓ AgentLoop
+      ↓ Decision
+      ↓ Security Policy Engine
+      ├── Permission Check (capability-based)
+      ├── Risk Classification
+      ├── Credential Policy
+      ├── Prompt-Injection Defense
+      ├── Rate / Resource Limits
+      └── Human Approval
+      ↓ Tool / Browser / Computer / Connector / Skill
+      ↓ Verifier
+      ↓ AuditLogger
+      ↓ Memory / Goal / Artifact Update
+
+### Authorization & Capability System
+
+The center was extended into a full centralized
+authorization layer:
+
+- **Capability catalog** (`capabilities.py`) — every
+  executable capability is explicitly defined
+  (`browser.read`, `filesystem.delete`,
+  `connector.email.send`, …): id, name, description,
+  category, risk, operations, approval requirement,
+  resources.  Nothing is implied; unknown ids raise.
+- **Owner profiles** (`profiles.py`) — Restricted /
+  Standard / Advanced / Fully Authorized grant tables
+  (monotone: restricted ⊆ standard ⊆ advanced ⊆
+  fully_authorized).  Fully Authorized changes *which*
+  capabilities are granted — never whether the policy
+  engine runs: destructive-action policy, audit, vault
+  protection, sandboxing and the emergency stop stay on
+  in every profile.
+- **Resource policies** (`resources.py`) — filesystem
+  roots, browser allow/block domains, connector
+  account scopes, computer app allowlists.  Explicitly
+  configured scopes are enforced; traversal and
+  blocklist-overrides-allowlist are handled.
+- **Policy versions** (`versioning.py`) — every profile
+  change or grant publishes a version; every decision
+  and audit record carries the deciding version.
+- **Dry-run simulator** (`simulator.py`) — side-effect
+  free policy simulation: decision, risk, required
+  capability, approval requirement, expected side
+  effects — no audit, no approval callbacks, no rate
+  mutation, no execution.
+- **Temporary grants** (`temporary.py`) — scoped,
+  expiring capability grants (path/url/account
+  prefixes); expiry is enforced at decision time.
+- **Trust boundaries** (`trust.py`) — nine boundaries;
+  only `system` and `authorized_user` may instruct.
+  Web/email/document/connector content is labeled
+  data and screened for instruction-shaped text.
+- **Central redactor** (`redactor.py`) — one redaction
+  authority for logs, errors, tool results,
+  trajectories, audit, screenshots and LLM context.
+- **Credential leases** (`vault.py`) — single-use,
+  expiring operation tokens; the raw value never leaves
+  the vault and redemption is audited.
+- **Emergency stop** (`emergency.py`) — one kill switch
+  halting the loop, background tasks, subagents,
+  connectors, browser and computer work.  Trips are
+  idempotent, halt callbacks always run, reset needs
+  explicit owner authorization, and the agent never
+  auto-resumes.
+- **Escalation** (`escalation.py`) — the only path to a
+  missing capability: a human-readable denial
+  explanation plus an explicit temporary-grant request.
+  No bypass flags, no hidden admin paths.
+- **Execution sandbox** (`sandbox_exec.py`) — isolated
+  subprocess with timeouts, output caps, env
+  scrubbing and (where available) filesystem jailing.
+
+Wiring: `ToolRegistry.execute` authorizes every call
+(`PERMISSION_DENIED` / `APPROVAL_REQUIRED`); the
+`AgentLoop` refuses to start or continue while the
+emergency stop is tripped; background tasks snapshot
+capabilities + policy version and revalidate after
+restarts; subagent creation is least-privilege
+(child ∩ parent) and refused under emergency stop;
+skills pass a security review before registration;
+connectors, the browser runtime and the computer
+controller all halt on emergency stop.
+
+    User Goal
+      ↓ AgentLoop
+      ↓ Decision
+      ↓ Security Policy Engine
+      ├── Permission Check (capability-based)
+      ├── Risk Classification
+      ├── Credential Policy
+      ├── Prompt-Injection Defense
+      ├── Rate / Resource Limits
+      └── Human Approval
+      ↓ Tool / Browser / Computer / Connector / Skill
+      ↓ Verifier
+      ↓ AuditLogger
+      ↓ Memory / Goal / Artifact Update
+
+- **PermissionManager** — capability-based (`browser.read`,
+  `email.send`), not role-based, for user / agent /
+  subagent / tool / skill / connector actors.  Least
+  privilege: a child's capabilities are the intersection
+  of requested and parent-held, so delegation can never
+  escalate privilege.
+- **Risk classification** — every action is classified
+  centrally and deterministically: `READ_ONLY` (webpage
+  read), `LOW_RISK_WRITE` (draft file create), `SENSITIVE`
+  (email/message send), `IRREVERSIBLE` (delete important
+  files, purchase, account changes).  Unknown actions fail
+  cautious (SENSITIVE), never open.
+- **Central enforcement** — `ToolRegistry.execute`
+  authorizes through the center before running anything:
+  validate → classify → injection screen → rate limits →
+  permission check → human approval → audit.  Denials and
+  approval holds come back as structured `permission_denied`
+  / `approval_required` results the loop already knows how
+  to pause on (resumable).
+- **Human approval** — structured requests carry action,
+  reason, target, risk level, expected consequence and
+  relevant context.  Non-agent actors (subagents,
+  background workers, skills) always go through central
+  approval — they cannot bypass it.  The main agent's own
+  tools keep their tested per-tool gates (the center
+  audits and defers); `strict_agent_approval=True`
+  centralizes even those.
+- **CredentialVault** — API keys, OAuth/refresh tokens,
+  passwords, cookies and session credentials live here
+  and only here.  Never in AgentState, memory, planner
+  output, LLM context, screenshots, logs or audit
+  records; every access is logged without the value.
+- **Prompt-injection defense** — trust levels
+  (`user_instruction` / `system_policy` may instruct;
+  `agent_state` / `tool_output` are data; `webpage` /
+  `email` / `document` are untrusted).  Instruction-shaped
+  text in low-trust content is flagged, never executed,
+  and never treated as a permission grant.
+- **AuditLogger** — hash-chained, tamper-evident
+  structured records (timestamp, task id, actor, action,
+  target, risk, permission result, approval status,
+  execution result, verification result) with secrets
+  redacted; `verify_chain()` detects tampering.
+- **Security events** — permission denied, approval
+  requested/granted/rejected, credential accessed,
+  suspicious instruction, prompt injection, sandbox
+  violation, repeated failed action, abnormal tool usage,
+  rate limited.
+- **Rate & abuse controls** — per-actor tool-call,
+  frequency, runtime, retry and resource budgets; repeated
+  suspicious behavior advises the orchestrator to pause or
+  terminate the task.
+- **Sandbox policy** — explicit allow/deny for generated
+  code (filesystem, network, process, environment;
+  credentials never) on top of the existing sandbox
+  architecture.
+- **Cross-platform** — one vocabulary on Windows, Linux
+  and macOS; OS-specific paths and sandbox behavior stay
+  inside the platform adapter.
+- **Agent wiring** — `AfnanAgent` builds the center after
+  all tools register (domain capabilities granted per
+  registration; `get_security_center()`,
+  `set_security_approver()`, `enable_security_center`,
+  `main` delegates).  Audit trail persists to
+  `security_audit.jsonl`.  Tests:
+  `tests/test_security_center.py` (54 tests).
+
+## Autonomous browser workflow
+
+`run_browser_goal(goal)` (main / `AfnanAgent.run_browser_goal`,
+backed by `afnan_ai/browser/workflow.py`) runs one complex
+browser goal end to end on the existing pipeline — no layer
+gained a second job:
+
+* before acting, the browser is briefed into the task state
+  (open tabs with purposes, current page, active profile,
+  network health), so the Planner works from what the browser
+  actually looks like;
+* every action is executed through the ToolRegistry and
+  re-verified against a fresh observation — a click that
+  changed nothing is never counted as success;
+* failures and uncertain states go to the RecoveryManager with
+  the full state (completed work is not redone, failed actions
+  are never blindly repeated, sensitive actions still pass the
+  human approval gate);
+* step, recovery and now also wall-clock limits
+  (`max_iterations`, `max_duration_s`) bound the run;
+* the final answer is composed from recorded evidence —
+  search results, extracted page text, verified steps and
+  downloads — not from what the actions merely claimed.
+
+End-to-end scenarios live in `tests/test_browser_workflow.py`
+(search → open → extract, multi-tab comparison, form login,
+pagination, downloads, dynamic SPA pages, limits, recovery,
+profile/session continuity).
+
+## Observation-driven loop (Phase 3)
+
+`run_browser_goal(goal, loop=True)` — or
+`Orchestrator.run_loop(...)` directly — runs the task as a
+true autonomous loop instead of one long pre-generated plan:
+
+* each cycle the Planner sees the **current** AgentState
+  (fresh observations, completed/failed steps, tool results)
+  and proposes only the next few actions (`batch_limit`,
+  default 3), or reports the goal complete via the
+  `{"complete": true}` plan form;
+* every action is executed and verified against a fresh
+  observation before the next decision; a failed or uncertain
+  step stops the batch immediately — the remaining steps of
+  that plan are discarded, recovery replans from the current
+  state, and the Planner re-decides. A stale plan is never
+  followed blindly;
+* hard limits bound the loop: `max_steps`,
+  `max_duration_s`, `max_replans`, `max_llm_calls`,
+  `max_repeated_actions` (the same tool with the same
+  arguments may not repeat endlessly) plus the existing
+  recovery-attempt limits;
+* the Planner additionally self-repairs one invalid reply
+  (bounded `max_parse_retries`, default 1) before failing.
+
+Accessibility now uses the modern Playwright API:
+`page.aria_snapshot()` is parsed into the normalized tree
+(the deprecated `page.accessibility` API remains only as a
+fallback for very old Playwright versions, and the DOM-derived
+tree after that). Semantic matches in the 0.5–0.8 confidence
+band are gated: acting on them requires human approval
+(category `uncertain_target`). Uploads are verified after the
+fact (the file input must show the uploaded file; a mismatch
+is a structured failure), and dialogs a page raises are
+recorded, redacted and dismissed by the driver and surfaced
+in page observations. Tests: `tests/test_architecture_upgrade.py`.
+
+## Operations: network, checkpoints, rate limits, profiles
+
+- **Network awareness**: pages report their request health
+  (failed requests, timeouts, blocked resources, HTTP 429s);
+  `browser_network_status` summarizes it for diagnostics and
+  recovery advice. Observation only: nothing can fire arbitrary
+  network requests.
+- **Task checkpointing**: with a `checkpoint_dir`, tasks persist
+  redacted, checksum-protected checkpoints (goal, plan, state,
+  recovery history, browser session) after every step.
+  `resume_task` continues an interrupted task from its last
+  checkpoint; completed steps are never executed twice, and a
+  corrupted checkpoint is rejected, never trusted.
+- **Rate-limit awareness**: rate-limit pages, bot-block signals
+  and HTTP 429 responses stop actions with a structured
+  `rate_limited` error; optional per-host pacing pauses instead
+  of hammering, and `browser_rate_limit` takes one controlled
+  backoff. There are no aggressive retries.
+- **Approval records**: every sensitive-action decision
+  (approved, denied, timed out, blocked) is recorded with its
+  outcome; `browser_approvals` lists them, and a policy can set
+  `approval_timeout_s` so a late answer never runs the action.
+- **Browser profiles**: isolated profiles with separate cookies,
+  storage and tabs (`browser_profiles`); one profile is active
+  at a time, switching stashes the other profile's tabs, and
+  profile records never hold credential-shaped preferences.
+
+## Security: approval gate + secret hygiene
+
+Irreversible browser actions are gated by a human, and secrets
+stay out of every record:
+
+- **Sensitive-action classification** (`afnan_ai/browser/security.py`)
+  — purchases, payments, message/email sends, account changes,
+  destructive clicks, form submits, file uploads and
+  credential/payment-field entry are classified from the tool,
+  the target element (its text, type and attributes) and the
+  page before anything runs.
+- **Configurable human approval** — an `ApprovalGate` with a
+  `SecurityPolicy` decides: safe actions run; sensitive ones run
+  only when a human approver says yes. With no approver
+  configured they **do not run at all** — they fail with the
+  structured `approval_required`/`approval_denied` browser
+  errors, recorded like any other failure. Set the approver via
+  `main.set_browser_approver(fn)` / `agent.set_browser_approver(fn)`,
+  the policy via the `security_policy=` argument. A new
+  `browser_upload_file` tool is gated the same way, and locators
+  can target iframes (`frame` key; CSS pierces open shadow DOM).
+- **Redaction** (`afnan_ai/redaction.py`) — password fields
+  report `***` instead of their contents, and AgentState tool
+  results, step/plan records, recovery context, approval
+  requests and planner prompts pass through the redactor, so
+  credentials, tokens, cookies and card numbers never land in
+  state, logs or model prompts. Execution always uses the real
+  values; only records are sanitized.
+- **Stress-tested** — long multi-step tasks, failed clicks,
+  stale elements, popups, session redirects, timeouts, failed
+  downloads/uploads, auth-failure recovery, iframe/shadow-DOM,
+  approval enforcement, secret scans and backend crashes are
+  covered in `tests/test_browser_stress.py` and
+  `tests/test_browser_security.py`, including an acceptance
+  suite for the six guarantees (tasks complete; failures
+  recover or terminate; no sensitive action without approval;
+  no secret exposure; failures never crash the agent;
+  Windows/Linux/macOS architecture intact).
+
+## ScreenObserver: structured visual observation
+
+For everything the DOM cannot see — canvas apps, remote
+desktops, custom-drawn UI — the `ScreenObserver`
+(`afnan_ai/screen/`) describes the actual screen:
+
+- **Structured, never raw pixels** — observations carry screen
+  dimensions, visible UI elements, regions (bounding boxes with
+  centers) and **confidence scores**. The Planner and AgentState
+  only ever see this structure; a screenshot file is saved only
+  when explicitly requested.
+- **DOM first, pixels as fallback** — browser observations fuse
+  the BrowserController's DOM elements (confidence 1.0) with
+  pixel-detected ones; when the DOM is missing, the visual
+  elements (marked `source="visual"`) carry the page. Desktop
+  captures reuse the agent's existing screenshot capture, and
+  PNG decoding/detection is pure stdlib, so the layer has no
+  platform or driver code of its own.
+- **Never act on a guess** — `screen_assess_action` tiers every
+  element: high confidence may proceed, medium must be
+  confirmed by the Verifier (fresh screen observations feed the
+  same observation-provider hook the browser layer uses), and
+  low confidence requires human approval. The observer itself
+  clicks nothing.
+- Tools: `screen_observe`, `screen_find_elements`,
+  `screen_assess_action` (disable with
+  `enable_screen_tools=False`; access via
+  `main.get_screen_observer()`). Screen-change detection makes
+  stale refs fail with a structured `element_not_found` instead
+  of acting on an old screen. Tests:
+  `tests/test_screen_observer.py`.
+
+## Accessibility, semantics, tabs, search and extraction
+
+Five capabilities layered on the same BrowserController (no
+second driver, no browser logic in the core agent):
+
+- **Accessibility tree** (`browser_accessibility_tree`) — the
+  browser's accessibility structure (Playwright's modern
+  `page.aria_snapshot()`, parsed and normalized) into
+  structured nodes (role, name, value, heading level); when a
+  driver cannot provide one, an equivalent tree is derived
+  from DOM interactive elements with live refs. Accessibility
+  first, DOM second, pixels (ScreenObserver) last.
+- **Semantic locator** (`browser_find_semantic`) — "Login
+  button", "Search field", "Next page link": candidates are
+  ranked by role fit + name similarity with confidence scores.
+  Matches below 0.5 are returned with **no element reference**,
+  so a low-confidence guess can never be acted on
+  automatically; matches in the 0.5–0.8 band require human
+  approval before an action runs on them.
+- **Multi-tab task manager** — tabs carry task purposes
+  (`browser_new_tab` with `purpose`, `browser_set_tab_purpose`,
+  purposes shown by `browser_list_tabs` and recorded into
+  AgentState), so parallel research lines never act on the
+  wrong tab.
+- **Web research** (`browser_search`, `browser_open_result`) —
+  search DuckDuckGo/Google/Bing, get structured results
+  (rank, title, URL, snippet, source; engine redirects
+  unwrapped), then open a result by index into its own
+  purpose-tagged tab with content attached.
+- **Page content extraction** (`browser_extract_content`) —
+  headings, paragraphs, lists, links and tables (row/column
+  structure preserved) in clean normalized form: boilerplate
+  filtered, large pages chunked with token estimates, and
+  secrets redacted from text and URLs before anything reaches
+  AgentState or the model. Tests:
+  `tests/test_browser_accessibility.py` and
+  `tests/test_browser_research.py` (30 browser tools total).
+
+## SPA awareness, pagination, CAPTCHA, downloads and sessions
+
+Five more advanced capabilities, same BrowserController and
+Tool architecture (35 browser tools total):
+
+- **JavaScript / SPA awareness** (`browser_wait_for_stable`) —
+  a page probe (URL, title, `readyState`, text/element counts,
+  content hash, detected React/Next.js/Vue/Angular) is polled
+  until it stops changing, so client-side routing and async
+  rendering are awaited by condition, never by blind sleeps.
+- **Infinite scroll / pagination** (`browser_collect_items`) —
+  scrolls feeds or clicks Next controls, deduplicates items,
+  and always terminates: `max_items`, `max_pages`, an
+  exhausted list, or a missing/stalled Next control.
+- **CAPTCHA detection** (`browser_check_challenge`,
+  `browser_wait_challenge`) — human checks are detected from
+  URL/title/text/widget signals and reported as
+  `human_required`; clicks and typing on a challenge page stop
+  with the same structured error. A CAPTCHA is **never solved
+  or bypassed by the agent**: with a challenge handler
+  registered (`set_challenge_handler`), the human is asked,
+  solves the check in the browser themselves, and the blocked
+  action resumes automatically once the page clears; without
+  one, the task pauses for the user, and recovery advice says
+  exactly that. Interactive `main` registers a console prompt
+  handler by default: the user solves the check in the browser
+  window, presses Enter, and the task resumes.
+- **Download manager** (`browser_downloads`) — downloads are
+  tracked centrally (state, filename, type, destination,
+  size); finished files are verified for existence and basic
+  integrity (magic bytes). Executable payloads are flagged
+  unsafe and need human approval; nothing is ever opened or
+  executed automatically.
+- **History / session manager** (`browser_session`) — every
+  navigation is recorded (tab, purpose, timestamp, redacted
+  URL); sessions can be inspected, saved to JSON and restored
+  later so a new task recovers the previous task's browsing
+  context. Tests: `tests/test_browser_advanced.py`.
+
+# ✅ Compatibility Tests
+
+The tests simulate all three operating systems (mocking
+`platform.system`, `subprocess`, speech and the microphone), so
+they run safely on any host:
 
 ```bash
-python -m unittest discover -s tests
+python -m unittest discover -s tests -v
+# or
+python tools/check_compatibility.py
 ```
 
-## Notes
+They cover adapter selection for Windows/macOS/Linux, each
+adapter's speech/open/launch behaviour, known-folder lookup, and
+that every existing voice command still routes to the same feature
+as before the refactor.
 
-- Speech recognition uses Google's free speech API; the wake word itself is detected on-device.
-- Sensitive actions (purchases, deletions, credential use) require explicit human approval — without an approver they never run.
-- The assistant never solves CAPTCHAs; it hands them to you and resumes afterwards.
+---
 
-## License
+# ⚙️ How It Works
 
-MIT License — see `LICENSE` for details.
+1. Launch Afnan AI.
+2. The startup animation will appear in your browser.
+3. Afnan activates the microphone.
+4. Say **"Afnan"** to wake the assistant.
+5. Afnan replies **"Yes Boss"**.
+6. Speak your command.
+7. Afnan processes and executes your request, or asks the local
+   Ollama Llama 3 model when no command matches.
+
+At startup the platform factory detects your OS and picks the
+matching adapter, so the same `main.py` opens apps, folders and
+files natively on Windows, macOS and Linux without any manual
+configuration. Folder search uses Spotlight on macOS and a
+home-folder search on Windows/Linux.
+
+---
+
+# 💬 Example
+
+```
+You: Afnan
+
+Afnan: Yes Boss
+
+You: Open Chrome
+
+Afnan: Opening Chrome
+```
+
+---
+
+# ⚠️ Notes
+
+- Windows, macOS and Linux are supported in this version.
+- On Windows, speech works out of the box with the built-in SAPI
+  voices (via pyttsx3 / PowerShell), no `say` command needed.
+- Safari is a macOS app; on Windows/Linux "Open Safari" opens your
+  default browser instead.
+- Ollama must be installed and running for AI chat functionality.
+- Make sure your microphone permission is enabled in your OS settings.
+
+---
+
+# 🚀 Afnan AI 1.7 — Coming Soon
+
+Afnan AI 1.7 is currently under active development and will introduce a major upgrade over version 1.2.
+
+### Planned Features
+
+- 🧠 Smarter AI Engine
+- ⚡ Faster Performance
+- 🎨 Modern User Interface
+- 🎙️ Improved Voice Recognition
+- 🤖 Advanced AI Automation
+- 🔥 More Powerful Voice Commands
+- 💎 Exclusive Premium Features
+
+Stay tuned for future updates.
+
+Thank you for supporting Afnan AI! ❤️
+
+---
+
+# 👨‍💻 Author
+
+Developed with ❤️ by **Afnan**
+
+If you like this project, please consider giving it a ⭐ on GitHub.
+
+---
+
+# 📄 License
+
+This project is licensed under the MIT License.
