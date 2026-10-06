@@ -123,4 +123,21 @@ class ComputerBackend(ABC):
             "keyboard": True,
             "accessibility": False,
             "screenshots": False,
+            "monitors": False,
+            "clipboard": False,
         }
+
+    # -- displays / monitors -------------------------------------------
+    def list_monitors(self) -> list[Any]:
+        """Physical displays; empty when undiscoverable."""
+        return []
+
+    # -- clipboard (policy-controlled) ------------------------------------
+    def clipboard_read(self) -> str | None:
+        return None
+
+    def clipboard_write(self, text: str) -> None:
+        raise _unsupported("clipboard_write")
+
+    def clipboard_clear(self) -> None:
+        raise _unsupported("clipboard_clear")
