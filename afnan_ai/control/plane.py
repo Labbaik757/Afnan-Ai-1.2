@@ -49,7 +49,7 @@ from afnan_ai.control.models import (
     RemoteCommandResult,
     SessionState,
 )
-from afnan_ai.control.pairing import PairingManager
+from afnan_ai.control.pairing import PairingManager, PairingError
 from afnan_ai.control.sessions import ClientSessionManager
 from afnan_ai.security.models import Actor, ActorKind
 
@@ -196,6 +196,17 @@ class ControlPlane:
         device_id = str(metadata.get("device_id", "")).strip()
         if not device_id:
             raise ControlPlaneError("device_id is required")
+        existing = self.devices.get(device_id)
+        if (
+            existing is not None
+            and existing.trust == DeviceTrust.REVOKED
+        ):
+            # Re-pairing a revoked device is never automatic.
+            # The owner must clear the revocation explicitly.
+            raise PairingError(
+                "device is revoked; revocation must be "
+                "cleared by the owner before re-pairing"
+            )
         self.devices.register(
             device_id,
             device_name=str(metadata.get("device_name", ""))[:120],
@@ -291,6 +302,32 @@ class ControlPlane:
             "token": token,
             "capabilities": list(DEFAULT_PAIRED_CAPABILITIES),
             "expires_at": session.expires_at,
+        }
+
+    def clear_device_revocation(
+        self, device_id: str, *, cleared_by: str
+    ) -> dict[str, Any]:
+        """Owner-only: clear a device revocation so it may pair again.
+
+        This is the only path back from REVOKED; re-pairing is never
+        automatic.  The action is audited and published as an event.
+        """
+        info = self.devices.clear_revocation(
+            device_id, cleared_by=cleared_by
+        )
+        self.audit.device_event(
+            "revocation_cleared",
+            device_id=device_id,
+            actor=cleared_by,
+        )
+        self.events.publish(
+            "device.revocation_cleared",
+            {"device_id": device_id, "cleared_by": cleared_by},
+            device_id=device_id,
+        )
+        return {
+            "device_id": device_id,
+            "trust": info.trust.value,
         }
 
     # -- authentication ------------------------------------------------------------
@@ -403,30 +440,63 @@ class ControlPlane:
 
     # -- events --------------------------------------------------------------------------
 
-    def event_stream_sse(self, session, timeout_s: float = 30.0):
-        """Yield SSE chunks for a session (used by the transport)."""
-        attached = self.events.attach(
-            session.session_id,
-            from_seq=session.last_event_seq,
-        )
-        for raw in attached["missed_events"]:
-            yield (
-                f"data: {__import__('json').dumps(raw)}\n\n"
-            ).encode("utf-8")
-        end = time.time() + timeout_s
-        while time.time() < end:
-            events = self.events.poll(session.session_id)
-            for raw in events:
-                self.metrics.record_events_delivered()
+    def event_stream_sse(
+        self, session, timeout_s: float = 30.0,
+        *, from_seq: int | None = None,
+    ):
+        """Yield SSE chunks for a session (used by the transport).
+
+        ``from_seq`` overrides the session's stored cursor when the
+        client explicitly supplies one (reconnect semantics).
+        """
+        try:
+            attached = self.events.attach(
+                session.session_id,
+                from_seq=(
+                    session.last_event_seq
+                    if from_seq is None
+                    else from_seq
+                ),
+            )
+            for raw in attached["missed_events"]:
                 yield (
                     f"data: {__import__('json').dumps(raw)}\n\n"
                 ).encode("utf-8")
-            time.sleep(0.5)
-        yield b": keep-alive\n\n"
+            end = time.time() + timeout_s
+            while time.time() < end:
+                # Revocation propagation: stop streaming the moment
+                # the session is no longer live.
+                live = self.sessions.get(session.session_id)
+                if live is None or not live.is_live():
+                    break
+                events = self.events.poll(session.session_id)
+                for raw in events:
+                    if raw.get("category") == "stream.gap":
+                        self.metrics.record_event_gap()
+                    self.metrics.record_events_delivered()
+                    yield (
+                        f"data: {__import__('json').dumps(raw)}\n\n"
+                    ).encode("utf-8")
+                time.sleep(0.5)
+            yield b": keep-alive\n\n"
+        finally:
+            self.metrics.record_sse_disconnect()
 
     def websocket_loop(self, session, sock) -> None:
-        """Serve one WebSocket connection for a session."""
-        from afnan_ai.control.transport import _WSFrame
+        """Serve one WebSocket connection for a session.
+
+        The connection is authenticated at upgrade time; session
+        liveness (revocation/expiry) is re-validated on every
+        iteration so a revoked device/session is disconnected
+        immediately.  Malformed frames close the connection with
+        the RFC 6455 close code and never affect other sessions
+        or the AgentLoop.
+        """
+        from afnan_ai.control.transport import (
+            _WSFrame,
+            _send_close,
+            WSProtocolError,
+        )
 
         attached = self.events.attach(
             session.session_id,
@@ -440,84 +510,144 @@ class ControlPlane:
                     )
                 )
             sock.settimeout(30.0)
+            idle_deadline = __import__("time").time() + 120.0
+            import select as _select
+
             while True:
-                # Client -> server: commands as JSON text frames.
+                # Revocation propagation: stop serving a session
+                # the moment it is no longer live.
+                live = self.sessions.get(session.session_id)
+                if live is None or not live.is_live():
+                    _send_close(sock, 1008, "session revoked")
+                    break
+                if __import__("time").time() > idle_deadline:
+                    _send_close(sock, 1000, "idle timeout")
+                    break
+                # Wait briefly for client input so server-side
+                # events are pushed even when the client is
+                # silent.  The socket timeout bounds slow sends.
                 try:
-                    frame = _WSFrame.decode(sock)
-                except OSError:
+                    readable, _, _ = _select.select(
+                        [sock], [], [], 0.5
+                    )
+                except (OSError, ValueError):
                     break
-                if frame is None:
-                    break
-                opcode, payload = frame
-                if opcode == _WSFrame.OPCODE_CLOSE:
-                    break
-                if opcode == _WSFrame.OPCODE_PING:
-                    sock.sendall(bytes([0x8A, 0x00]))
-                    continue
-                if opcode != _WSFrame.OPCODE_TEXT:
-                    continue
+                # TLS sockets may hold decrypted bytes that
+                # select(2) cannot see; check pending() too.
+                pending = False
                 try:
-                    body = __import__("json").loads(
-                        payload.decode("utf-8")
+                    pending = bool(
+                        getattr(sock, "pending", lambda: 0)()
                     )
                 except Exception:
-                    continue
-                # Heartbeat shortcut.
-                if (
-                    isinstance(body, dict)
-                    and body.get("type") == "heartbeat"
-                ):
+                    pending = False
+                if readable or pending:
+                    # Client -> server: commands as JSON text frames.
                     try:
-                        self.sessions.heartbeat(
-                            session.session_id
-                        )
-                        sock.sendall(
-                            _WSFrame.encode_text(
-                                __import__("json").dumps(
-                                    {"type": "heartbeat_ack"}
-                                )
-                            )
-                        )
+                        frame = _WSFrame.decode(sock)
+                    except WSProtocolError as e:
+                        _send_close(sock, e.code, str(e))
+                        break
                     except OSError:
                         break
-                    continue
-                # Remote command over the socket.  The session was
-                # authenticated at upgrade time; re-validate
-                # liveness per command instead of re-verifying the
-                # bearer token.
-                try:
-                    result = self.execute_command_session(
-                        session, body
+                    if frame is None:
+                        break
+                    idle_deadline = (
+                        __import__("time").time() + 120.0
                     )
-                    sock.sendall(
-                        _WSFrame.encode_text(
-                            __import__("json").dumps(
-                                {
-                                    "type": "command_result",
-                                    "result": result,
-                                }
+                    opcode, payload = frame
+                    if opcode == _WSFrame.OPCODE_CLOSE:
+                        _send_close(sock, 1000)
+                        break
+                    if opcode == _WSFrame.OPCODE_PING:
+                        try:
+                            sock.sendall(
+                                _WSFrame.encode_pong(payload)
                             )
-                        )
-                    )
-                except Exception as e:
+                        except OSError:
+                            break
+                        continue
+                    if opcode != _WSFrame.OPCODE_TEXT:
+                        # Binary frames are not part of the protocol.
+                        continue
                     try:
+                        body = __import__("json").loads(
+                            payload.decode("utf-8")
+                        )
+                    except Exception:
+                        continue
+                    # Heartbeat shortcut.
+                    if (
+                        isinstance(body, dict)
+                        and body.get("type") == "heartbeat"
+                    ):
+                        try:
+                            self.sessions.heartbeat(
+                                session.session_id
+                            )
+                            sock.sendall(
+                                _WSFrame.encode_text(
+                                    __import__("json").dumps(
+                                        {"type": "heartbeat_ack"}
+                                    )
+                                )
+                            )
+                        except OSError:
+                            break
+                        continue
+                    # Remote command over the socket.  The session was
+                    # authenticated at upgrade time; re-validate
+                    # liveness per command instead of re-verifying the
+                    # bearer token.
+                    try:
+                        result = self.execute_command_session(
+                            session, body
+                        )
                         sock.sendall(
                             _WSFrame.encode_text(
                                 __import__("json").dumps(
                                     {
-                                        "type": "error",
-                                        "error": str(e)[:300],
+                                        "type": "command_result",
+                                        "result": result,
                                     }
                                 )
                             )
                         )
-                    except OSError:
-                        break
+                    except Exception as e:
+                        # Never leak internal detail to the socket:
+                        # only known-safe error types keep their message.
+                        if isinstance(
+                            e,
+                            (
+                                AuthenticationError,
+                                ControlPlaneError,
+                                PermissionError,
+                                KeyError,
+                            ),
+                        ):
+                            safe_error = str(e)[:300]
+                        else:
+                            safe_error = "command failed"
+                        try:
+                            sock.sendall(
+                                _WSFrame.encode_text(
+                                    __import__("json").dumps(
+                                        {
+                                            "type": "error",
+                                            "error": safe_error,
+                                        }
+                                    )
+                                )
+                            )
+                        except OSError:
+                            break
                 # Server -> client: pending events.
                 try:
                     for raw in self.events.poll(
                         session.session_id
                     ):
+                        if raw.get("category") == "stream.gap":
+                            self.metrics.record_event_gap()
                         self.metrics.record_events_delivered()
                         sock.sendall(
                             _WSFrame.encode_text(
@@ -532,6 +662,7 @@ class ControlPlane:
                 except OSError:
                     break
         finally:
+            self.metrics.record_ws_disconnect()
             try:
                 self.events.detach(session.session_id)
             except Exception:
