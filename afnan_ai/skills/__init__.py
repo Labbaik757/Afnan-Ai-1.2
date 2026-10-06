@@ -64,18 +64,96 @@ from afnan_ai.skills.sandbox import (
     ValidationIssue,
 )
 
+from afnan_ai.skills.conditions import (
+    StepCondition,
+    evaluate_predicate,
+    loop_items,
+    should_run_step,
+)
+from afnan_ai.skills.contracts import (
+    ContractCheck,
+    ContractReport,
+    check_postconditions,
+    check_preconditions,
+)
+from afnan_ai.skills.graph import DependencyError, DependencyGraph
+from afnan_ai.skills.history import (
+    SkillExecutionRecord,
+    SkillHistory,
+)
+from afnan_ai.skills.importer import ImportReport, import_skill
+from afnan_ai.skills.integrity import (
+    manifest_hash,
+    sign_manifest,
+    skill_hash,
+    verify_signature,
+    verify_skill,
+)
+from afnan_ai.skills.manifest import (
+    ExecutionLimits,
+    SkillCompatibility,
+    SkillManifest,
+    SkillSource,
+    VerificationStatus,
+    manifest_from_skill,
+)
+from afnan_ai.skills.marketplace import (
+    MarketplaceEntry,
+    entry_from_manifest,
+)
+from afnan_ai.skills.observability import emit_activity, emit_audit
+from afnan_ai.skills.optimize import (
+    OptimizationSuggestion,
+    suggest_optimizations,
+)
+from afnan_ai.skills.security import (
+    SecurityFinding,
+    SecurityReport,
+    analyze_skill,
+)
+from afnan_ai.skills.toolsmith import (
+    ToolBuilder,
+    ToolProposal,
+    ToolProposalStatus,
+)
+from afnan_ai.skills.versions import (
+    VersionChange,
+    bump,
+    compare,
+    diff_schemas,
+    diff_skills,
+    is_valid,
+    latest,
+    parse,
+)
+
 __all__ = [
+    "ContractCheck",
+    "ContractReport",
+    "DependencyError",
+    "DependencyGraph",
+    "ExecutionLimits",
+    "ImportReport",
+    "MarketplaceEntry",
+    "OptimizationSuggestion",
+    "SecurityFinding",
+    "SecurityReport",
     "Skill",
     "SkillCandidate",
+    "SkillCompatibility",
     "SkillDependencies",
     "SkillDraft",
     "SkillError",
     "SkillExecutionError",
+    "SkillExecutionRecord",
     "SkillExecutor",
     "SkillGenerator",
+    "SkillHistory",
     "SkillLearner",
+    "SkillManifest",
     "SkillRegistry",
     "SkillRisk",
+    "SkillSource",
     "SkillStatus",
     "SkillStep",
     "SkillTool",
@@ -83,12 +161,42 @@ __all__ = [
     "SandboxResult",
     "SandboxedPython",
     "SkillValidation",
+    "StepCondition",
+    "ToolBuilder",
+    "ToolProposal",
+    "ToolProposalStatus",
     "ValidationIssue",
+    "VerificationStatus",
+    "VersionChange",
+    "analyze_skill",
+    "bump",
+    "check_postconditions",
+    "check_preconditions",
     "classify_tool",
+    "compare",
     "compose_skill",
     "derive_risk",
+    "diff_schemas",
+    "diff_skills",
     "effective_risk",
+    "emit_activity",
+    "emit_audit",
+    "entry_from_manifest",
+    "evaluate_predicate",
+    "import_skill",
+    "is_valid",
+    "latest",
+    "loop_items",
+    "manifest_from_skill",
+    "manifest_hash",
     "needs_approval",
+    "parse",
     "research_report_skill",
     "risk_report",
+    "should_run_step",
+    "sign_manifest",
+    "skill_hash",
+    "suggest_optimizations",
+    "verify_signature",
+    "verify_skill",
 ]
