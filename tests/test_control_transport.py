@@ -204,11 +204,17 @@ class _TransportTestBase(unittest.TestCase):
         super().setUp()
         self._sockets: list[socket.socket] = []
         self.plane, self._tmp = make_plane()
+        # Owner token goes to the test's tmp dir, never the real
+        # ~/.afnan-ai.
+        self._owner_token_path = str(
+            Path(self._tmp) / "owner_token"
+        )
         self.transport = ControlTransport(
             self.plane,
             host="127.0.0.1",
             port=self.PORT,
             allow_insecure=True,
+            owner_token_path=self._owner_token_path,
         )
         self.transport.start()
 
@@ -992,6 +998,186 @@ class LongHorizonTests(unittest.TestCase):
                     plane.authenticate(old)
         finally:
             plane.stop()
+
+
+# ---------------------------------------------------------------------------
+# Owner-only pairing-approval endpoints
+# ---------------------------------------------------------------------------
+
+
+class OwnerEndpointTests(_TransportTestBase):
+    """The owner's pairing approval goes through the RUNNING server.
+
+    These endpoints are what ``approve_pairing.py`` (a separate
+    process) uses; they must see the server's own in-memory pairing
+    requests.  Guarded by the owner token + loopback-only.
+    """
+
+    PORT = 18769
+
+    def _owner_token(self) -> str:
+        with open(self._owner_token_path, encoding="utf-8") as fh:
+            return fh.read().strip()
+
+    def _owner_http(
+        self,
+        method: str,
+        path: str,
+        body: dict | None = None,
+        token: str | None = None,
+    ) -> tuple[int, dict]:
+        status, raw = self._http(
+            method,
+            path,
+            body=body,
+            token=self._owner_token() if token is None else token,
+        )
+        try:
+            return status, json.loads(raw.decode("utf-8"))
+        except ValueError:
+            return status, {}
+
+    def test_owner_token_file_created_0600(self):
+        self.assertTrue(
+            os.path.isfile(self._owner_token_path),
+            "owner token file was not created",
+        )
+        mode = os.stat(self._owner_token_path).st_mode & 0o777
+        self.assertEqual(mode, 0o600, f"mode is {oct(mode)}")
+        self.assertGreaterEqual(len(self._owner_token()), 32)
+
+    def test_owner_token_stable_across_loads(self):
+        from afnan_ai.control.transport import (
+            load_or_create_owner_token,
+        )
+
+        again = load_or_create_owner_token(
+            self._owner_token_path
+        )
+        self.assertEqual(again, self._owner_token())
+
+    def test_owner_list_requires_owner_token(self):
+        # No token at all.
+        status, _ = self._http("GET", "/v1/owner/pairings")
+        self.assertEqual(status, 401)
+        # Wrong token.
+        status, _ = self._owner_http(
+            "GET", "/v1/owner/pairings", token="wrong-token"
+        )
+        self.assertEqual(status, 401)
+        # A valid *device* token is not an owner token.
+        d = pair_device(self.plane, device_id="owner-t1")
+        status, _ = self._owner_http(
+            "GET", "/v1/owner/pairings", token=d["token"]
+        )
+        self.assertEqual(status, 401)
+
+    def test_owner_list_approve_deny_roundtrip(self):
+        # Pairing request created against the server's own plane.
+        pairing_id, code = self.plane.pair_request(
+            {
+                "device_id": "owner-phone-1",
+                "device_name": "Owner Phone",
+                "platform": "android",
+            }
+        )
+        status, listed = self._owner_http(
+            "GET", "/v1/owner/pairings"
+        )
+        self.assertEqual(status, 200)
+        ids = [p["pairing_id"] for p in listed["pairings"]]
+        self.assertIn(pairing_id, ids)
+        entry = next(
+            p for p in listed["pairings"]
+            if p["pairing_id"] == pairing_id
+        )
+        self.assertEqual(entry["device_name"], "Owner Phone")
+        self.assertNotIn("code", entry)
+        self.assertNotIn("code_hash", entry)
+
+        # Approve through the HTTP endpoint (what the CLI does).
+        status, approved = self._owner_http(
+            "POST",
+            "/v1/owner/pairings/approve",
+            {"pairing_id": pairing_id, "approved_by": "owner"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(approved["state"], "approved")
+
+        # The device can now redeem its code and connect.
+        redeemed = self.plane.pair_redeem(
+            {"pairing_id": pairing_id, "code": code}
+        )
+        self.assertIn("token", redeemed)
+
+        # Deny path: a second request is rejected, redeem fails.
+        pairing_id2, _ = self.plane.pair_request(
+            {"device_id": "owner-phone-2"}
+        )
+        status, _ = self._owner_http(
+            "POST",
+            "/v1/owner/pairings/deny",
+            {"pairing_id": pairing_id2},
+        )
+        self.assertEqual(status, 200)
+        status, listed = self._owner_http(
+            "GET", "/v1/owner/pairings"
+        )
+        ids = [p["pairing_id"] for p in listed["pairings"]]
+        self.assertNotIn(pairing_id2, ids)
+
+    def test_owner_approve_unknown_or_missing_id(self):
+        status, _ = self._owner_http(
+            "POST",
+            "/v1/owner/pairings/approve",
+            {"pairing_id": "pair_doesnotexist"},
+        )
+        self.assertEqual(status, 400)
+        status, _ = self._owner_http(
+            "POST", "/v1/owner/pairings/approve", {}
+        )
+        self.assertEqual(status, 400)
+
+    def test_cli_client_against_running_server(self):
+        """The real approve_pairing CLI client, cross-process style."""
+        from afnan_ai.control.approve_pairing import OwnerClient
+
+        pairing_id, code = self.plane.pair_request(
+            {
+                "device_id": "owner-phone-3",
+                "device_name": "CLI Phone",
+            }
+        )
+        client = OwnerClient(
+            control_dir=self._tmp,
+            host="127.0.0.1",
+            port=self.PORT,
+            owner="owner",
+        )
+        pending = client.list_pending()
+        self.assertIn(
+            pairing_id, [p["pairing_id"] for p in pending]
+        )
+        result = client.approve(pairing_id)
+        self.assertEqual(result["state"], "approved")
+        redeemed = self.plane.pair_redeem(
+            {"pairing_id": pairing_id, "code": code}
+        )
+        self.assertIn("token", redeemed)
+
+    def test_cli_without_server_fails_cleanly(self):
+        from afnan_ai.control.approve_pairing import (
+            OwnerClient,
+            ServerUnreachable,
+        )
+
+        with self.assertRaises(ServerUnreachable):
+            OwnerClient(
+                control_dir=self._tmp,
+                host="127.0.0.1",
+                port=18999,
+                owner="owner",
+            ).list_pending()
 
 
 if __name__ == "__main__":

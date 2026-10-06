@@ -848,11 +848,25 @@ class RemoteCommandRouter:
         result = browser.screenshot()
         # Screenshots stay server-side; the client gets a
         # reference it can fetch through the artifact channel.
-        return {
+        response = {
             "path": str(result.get("path", "")),
             "size_bytes": result.get("size_bytes", 0),
             "captured_at": result.get("captured_at", ""),
         }
+        # Optional inline delivery for thin clients (e.g. the Android
+        # app) that cannot fetch the server-side path directly.
+        # Backward compatible: omitted unless explicitly requested.
+        if command.payload.get("inline"):
+            import base64
+            import os
+            path = response["path"]
+            if path and os.path.isfile(path):
+                with open(path, "rb") as f:
+                    raw = f.read(5 * 1024 * 1024)
+                response["data_base64"] = base64.b64encode(raw).decode(
+                    "ascii"
+                )
+        return response
 
     # -- computer handlers (existing runtime only) ------------------------------------------
 
