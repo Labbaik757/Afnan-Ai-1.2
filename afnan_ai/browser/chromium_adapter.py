@@ -1455,13 +1455,30 @@ function(value) {
 
     def screenshot(self, handle: Any) -> bytes:
         state = self._page_state(handle)
-        result = self._cdp(
-            state,
-            "Page.captureScreenshot",
+        # fromSurface can hang in some headless environments;
+        # fall back to a plain capture when it does.
+        result = None
+        last_error = ""
+        for params in (
             {"format": "png", "fromSurface": True},
-            session_id=handle.session_id,
-            timeout=30,
-        )
+            {"format": "png"},
+        ):
+            try:
+                result = self._cdp(
+                    state,
+                    "Page.captureScreenshot",
+                    params,
+                    session_id=handle.session_id,
+                    timeout=30,
+                )
+                break
+            except BrowserException as e:
+                last_error = str(e)
+        if result is None:
+            raise BrowserException(
+                f"Chromium screenshot failed: {last_error}",
+                code=BrowserErrorCode.OPERATION_FAILED,
+            )
         data = result.get("data")
         if not data:
             raise BrowserException(
