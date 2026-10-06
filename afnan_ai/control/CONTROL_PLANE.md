@@ -74,6 +74,7 @@ REMOTE CLIENT -> AUTHENTICATE -> AUTHORIZE -> SEND COMMAND
 | `transport.py` | Stdlib HTTP + SSE + WebSocket server, TLS / dev-only insecure |
 | `plane.py` | `ControlPlane` — wiring facade |
 | `server.py` | `ControlPlaneServer` — lifecycle (`from_agent`) |
+| `client/` | Client SDK: `ControlClient`, `PairingClient`, `SessionClient`, `CommandClient`, `EventClient`, `ReconnectManager`, `RemoteStateStore`, `ProtocolError` |
 
 ## Device pairing
 
@@ -182,12 +183,50 @@ observations and secrets never cross the boundary.
 
 ## Transport security
 
-- TLS when a certificate/key is configured.
+- TLS when a certificate/key is configured: TLS 1.2 minimum,
+  obsolete protocol versions disabled, restricted cipher list.
+  Missing/unreadable cert or key fails startup loudly — never a
+  silent plaintext downgrade.
 - Plaintext only with `allow_insecure=True` (explicit development
   opt-in) and only on loopback; non-loopback insecure bind is
   refused.
 - Credentials, vault secrets and session secrets are never
   transmitted or logged.
+
+### HTTP hardening
+
+- Request bodies capped at 1 MiB; malformed JSON → 400 with a safe
+  message (no tracebacks, no internal paths).
+- Auth failures → 401, authorization failures → 403, unknown
+  resources → 404, unsupported methods → 405, rate-limit
+  breaches → 429.  Every error carries an `X-Request-Id` for
+  correlation.
+- Per-IP sliding-window rate limits on pairing (10/min) and
+  commands (240/min); breaches are counted in metrics.
+- CORS is deny-by-default: no CORS headers are emitted unless an
+  origin is explicitly allow-listed via `cors_origins=(...)`.
+
+### WebSocket hardening (RFC 6455)
+
+- Client frames must be masked; unmasked frames close the
+  connection with 1002.
+- Reserved opcodes, fragmented control frames, control frames
+  over 125 bytes, and fragmented data messages are rejected
+  (fragmentation is not supported — documented policy).
+- Declared payloads over 1 MiB are rejected with 1009 before any
+  allocation.
+- Text frames must be valid UTF-8 (1007 otherwise).
+- Full close handshake, ping/pong, idle timeout (120 s), socket
+  read/write timeouts, and slow-client disconnect (no unbounded
+  buffering).
+- Connection caps: 128 total, 4 per device.  Session revocation
+  or device revocation mid-connection terminates the socket
+  immediately (close 1008); a malformed client can never crash
+  the server thread or affect the AgentLoop.
+- Authentication prefers the `Authorization: Bearer` header on the
+  upgrade request.  `?token=` is a compatibility fallback only —
+  the URL is never logged, persisted, or included in audit/activity
+  data.
 
 ## Deployment
 
@@ -220,10 +259,63 @@ the control plane is an optional deployment component.
 3. `POST /v1/pair/redeem` → `{device_id, session_id, token, capabilities}`
 4. `POST /v1/commands` with `Authorization: Bearer <token>` and a
    `RemoteCommand` body → `RemoteCommandResult`
-5. `GET /v1/events` (SSE) or `GET /v1/stream?token=...` (WebSocket)
-   for real-time events; reconnect with the last cursor.
+5. `GET /v1/events` (SSE) or `GET /v1/stream` (WebSocket, Bearer
+   header preferred) for real-time events; reconnect with the last
+   cursor.  If history is unavailable the server emits an explicit
+   `stream.gap` event and a fresh snapshot — it never pretends
+   missing events were delivered.
 6. `POST /v1/session/heartbeat` to keep the session warm;
-   `POST /v1/session/rotate` to rotate the token.
+   `POST /v1/session/rotate` to rotate the token (old token stops
+   working immediately; the session id stays stable).
+
+### Client SDK (`afnan_ai/control/client/`)
+
+Transport-focused, no agent logic:
+
+```python
+from afnan_ai.control.client import (
+    ControlClient, PairingClient, SessionClient, CommandClient,
+    EventClient, ReconnectManager, RemoteStateStore,
+)
+
+http = ControlClient("https://agent-pc:8765")
+pid, code = PairingClient(http).request_pairing(
+    {"device_id": "my-phone", "platform": "android"})
+# ... user approves on the owner side ...
+creds = PairingClient(http).redeem(pid, code)
+
+sessions = SessionClient(http)
+sessions.set_token(creds["token"])
+result = CommandClient(http).execute(
+    creds["token"], "list_tasks", {})
+
+# Resilient event streaming with cursor persistence:
+events = EventClient(http)
+store = RemoteStateStore()
+reconnect = ReconnectManager()
+reconnect.run(lambda: [
+    store.update_event(e)
+    for e in events.stream_sse(
+        creds["token"],
+        cursor=reconnect.load_cursor(),
+        on_event=lambda e: reconnect.save_cursor(
+            e.get("seq", 0)),
+    )
+])
+```
+
+`ReconnectManager` uses exponential backoff with jitter, stops
+retrying on authentication failures, and never logs tokens.
+`RemoteStateStore` keeps a versioned, sanitized snapshot —
+never secrets, credentials, or hidden reasoning.
+
+### Re-pairing policy
+
+A revoked device can never pair again on its own: `pair_request`
+refuses revoked devices.  The owner must explicitly call
+`plane.clear_device_revocation(device_id, cleared_by=...)`, which
+is audited and published as an event, before the device may start
+a fresh pairing.
 
 ## Testing
 
@@ -236,3 +328,12 @@ event replay, approval binding/expiry/replay, emergency stop,
 multi-device coexistence and revocation.  Security and routing logic
 execute for real — only the network transport is substituted in
 tests.
+
+`tests/test_control_transport.py` covers the real HTTP/WebSocket/SSE
+transport on loopback: status codes (401/403/404/405/400/429),
+malformed and oversized bodies, CORS denial, RFC 6455 handshake
+validation, masking enforcement, malformed/oversized frames,
+ping/pong, close handshake, revoked-token/session/device rejection,
+pairing brute force over HTTP, concurrent pause/resume of one task,
+revocation during streaming, token rotation chains, and a 500-event
+ordering soak plus rapid reconnect cycles.
