@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base theme referenced by the manifest. Compose draws the UI;
+         this only sets window chrome for cold start. -->
+    <style name="Theme.AfnanAI" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/afnan_teal_dark</item>
+        <item name="android:statusBarColor">@color/afnan_teal_dark</item>
+        <item name="android:navigationBarColor">@color/afnan_teal_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <!-- Splash theme used by MainActivity before setContent. -->
+    <style name="Theme.AfnanAI.Splash" parent="Theme.AfnanAI">
+        <item name="android:windowBackground">@drawable/splash_background</item>
+    </style>
+</resources>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Deep teal + warm amber brand palette -->
+    <color name="afnan_teal">#00695C</color>
+    <color name="afnan_teal_dark">#00332E</color>
+    <color name="afnan_teal_light">#9CF2E3</color>
+    <color name="afnan_amber">#FFB300</color>
+    <color name="afnan_amber_dark">#8A5A00</color>
+
+    <color name="ic_launcher_background">#00332E</color>
+</resources>

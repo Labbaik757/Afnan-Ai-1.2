@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Afnan AI</string>
+
+    <!-- Notification channels -->
+    <string name="channel_approvals">Approvals</string>
+    <string name="channel_approvals_desc">Afnan needs your approval before sensitive actions</string>
+    <string name="channel_tasks">Tasks</string>
+    <string name="channel_tasks_desc">Task progress, completion and Afnan activity</string>
+
+    <!-- Notification content -->
+    <string name="notif_approve">Approve</string>
+    <string name="notif_deny">Deny</string>
+    <string name="notif_sync_title">Afnan AI is listening</string>
+    <string name="notif_sync_text">Connected to your Afnan runtime</string>
+</resources>
