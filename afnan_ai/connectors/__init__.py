@@ -1,4 +1,4 @@
-"""Connector System — Muse-style external-service integration.
+"""Connector System — external-service integration.
 
 The agent talks to external services (email, calendar, cloud
 storage, chat, project management, design tools, GitHub, CRM,
