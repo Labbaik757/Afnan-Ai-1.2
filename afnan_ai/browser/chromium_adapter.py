@@ -62,6 +62,43 @@ _CANDIDATES = {
     ),
 }
 
+
+def _windows_install_paths(browser: str) -> list[Path]:
+    """Standard Windows install locations (not on PATH)."""
+    program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    program_files_x86 = os.environ.get(
+        "ProgramFiles(x86)", r"C:\Program Files (x86)"
+    )
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    paths = []
+    if browser in ("chromium", "chrome"):
+        paths += [
+            Path(program_files) / "Google" / "Chrome"
+            / "Application" / "chrome.exe",
+            Path(program_files_x86) / "Google" / "Chrome"
+            / "Application" / "chrome.exe",
+            Path(local_app_data) / "Chromium" / "Application"
+            / "chrome.exe",
+        ]
+    if browser in ("chromium", "edge"):
+        paths += [
+            Path(program_files) / "Microsoft" / "Edge"
+            / "Application" / "msedge.exe",
+            Path(program_files_x86) / "Microsoft" / "Edge"
+            / "Application" / "msedge.exe",
+        ]
+    return paths
+
+
+def _playwright_cache_dirs() -> list[Path]:
+    """Playwright browser cache locations across platforms."""
+    dirs = [Path.home() / ".cache" / "ms-playwright"]
+    if os.name == "nt":
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        if local_app_data:
+            dirs.append(Path(local_app_data) / "ms-playwright")
+    return [d for d in dirs if d.is_dir()]
+
 _SUPPORTED = ("chromium", "chrome", "edge")
 
 
@@ -336,14 +373,19 @@ class ChromiumAdapter(BrowserEngineAdapter):
             found = shutil.which(candidate)
             if found:
                 return found
-        # Playwright's downloaded Chromium (dev machines) works too.
-        cache = Path.home() / ".cache" / "ms-playwright"
-        if cache.is_dir():
+        # Windows: standard install locations are not on PATH.
+        for path in _windows_install_paths(browser):
+            if path.is_file():
+                return str(path)
+        # Playwright's downloaded browsers work too.
+        for cache in _playwright_cache_dirs():
             patterns = (
                 "*/chrome-linux/chrome",
                 "*/chrome-linux/headless_shell",
                 "*/chrome-mac/*/Chromium",
                 "*/chromium-*/chrome-linux/chrome",
+                "*/chrome-win/chrome.exe",
+                "*/chrome-win/headless_shell.exe",
             )
             for pattern in patterns:
                 for path in sorted(cache.glob(pattern)):
