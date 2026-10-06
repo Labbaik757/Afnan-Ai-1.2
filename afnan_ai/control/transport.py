@@ -10,7 +10,9 @@ Security posture:
 - TLS is used whenever a certificate/key pair is configured, with
   TLS 1.2 as the minimum version and a restricted cipher list.
 - Plaintext is allowed only with ``allow_insecure=True`` (explicit
-  development-only opt-in) and then only on loopback interfaces.
+  development-only opt-in) and then only on loopback interfaces,
+  unless ``allow_insecure_lan=True`` is also passed (explicit
+  development-only opt-in for the local network, with a loud warning).
 - Binding a non-loopback address without TLS is refused.
 - Every request authenticates via ``Authorization: Bearer`` except
   the pairing bootstrap endpoints, which are rate-limited.
@@ -767,20 +769,29 @@ class ControlTransport:
         tls_cert: str | None = None,
         tls_key: str | None = None,
         allow_insecure: bool = False,
+        allow_insecure_lan: bool = False,
         cors_origins: tuple[str, ...] = (),
         ws_idle_timeout_s: float = 120.0,
         owner_token_path: str | None = None,
     ) -> None:
         if not tls_cert or not tls_key:
-            if not allow_insecure:
+            if not allow_insecure and not allow_insecure_lan:
                 raise TransportError(
                     "TLS certificate/key required unless "
                     "allow_insecure=True (development only)"
                 )
-            if not _is_loopback(host):
+            if not _is_loopback(host) and not allow_insecure_lan:
                 raise TransportError(
                     "insecure transport refused on non-loopback "
-                    "address"
+                    "address (pass allow_insecure_lan=True to opt in "
+                    "explicitly, development only)"
+                )
+            if allow_insecure_lan and not _is_loopback(host):
+                print(
+                    "WARNING: plaintext control plane on non-loopback "
+                    f"address {host}:{port} (development only) — "
+                    "anyone on this network can read and send commands.",
+                    flush=True,
                 )
         elif not _tls_files_ok(tls_cert, tls_key):
             raise TransportError(
