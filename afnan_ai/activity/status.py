@@ -1,6 +1,6 @@
 """Agent status model — the user-facing live state.
 
-Standard states from the spec.  The tracker derives status
+Standard live-agent states.  The tracker derives status
 from TaskManager + AgentLoop events; the UI never touches
 the loop directly.
 """
