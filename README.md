@@ -24,7 +24,13 @@ Afnan AI is a personal voice assistant built with Python and powered by Ollama. 
 - 📺 YouTube Search
 - 📸 Screenshot Capture
 - 🎬 Startup GIF Animation (in your browser, on every platform)
-- 🎯 Wake Word Detection ("Afnan")
+- 🎯 Wake Word Detection ("Afnan") — on-device, private
+- 🗣️ Urdu Voice (sunta aur bolta hai Urdu mein)
+- 🌐 Browser Automation (navigate, search, extract)
+- 🖥️ Desktop Control (verified computer-use actions)
+- 🔬 Deep Research (evidence, citations, contradictions)
+- 🧠 Memory, Goals, Tasks & Scheduling
+- 🛡️ Safety First (sensitive actions need your approval)
 - ⚡ Fast Voice Command Processing
 
 ---
@@ -192,6 +198,23 @@ Afnan-Ai-1.2
 │   │   └── builtin.py       (open_url, open_application,
 │   │                         search_google, take_screenshot, ...)
 │   ├── speech.py            (pyttsx3 first, adapter speech as fallback)
+│   ├── wakeword.py          (on-device "Afnan" wake-word detection)
+│   ├── memory_store.py      (persistent memory)
+│   ├── goal_manager.py      (goals & milestones)
+│   ├── task_manager.py      (long-running tasks)
+│   ├── scheduler.py         (scheduled & background tasks)
+│   ├── skills/              (dynamic skill system)
+│   ├── subagents/           (multi-agent delegation)
+│   ├── connectors/          (external service integrations)
+│   ├── artifacts/           (generated documents & files)
+│   ├── context/             (long-context & trajectory reasoning)
+│   ├── research/            (research with evidence & citations)
+│   ├── evaluation/          (self-evaluation & benchmarking)
+│   ├── security/            (permissions, vault, audit)
+│   ├── activity/            (activity center & approvals)
+│   ├── workspace/           (secure isolated task workspaces)
+│   ├── computer/            (desktop automation runtime)
+│   ├── proactive/           (proactive suggestions)
 │   └── platform/
 │       ├── base.py          (PlatformAdapter interface)
 │       ├── factory.py       (auto-selects the adapter at runtime)
