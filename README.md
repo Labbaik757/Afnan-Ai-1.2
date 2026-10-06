@@ -31,6 +31,7 @@ Afnan AI is a personal voice assistant built with Python and powered by Ollama. 
 - 🔬 Deep Research (evidence, citations, contradictions)
 - 🧠 Memory, Goals, Tasks & Scheduling
 - 🛡️ Safety First (sensitive actions need your approval)
+- 📡 Remote Control (paired devices: monitor & control securely)
 - ⚡ Fast Voice Command Processing
 
 ---
@@ -60,6 +61,7 @@ Afnan AI is a personal voice assistant built with Python and powered by Ollama. 
 | 📄 Artifacts | Generated docs and files |
 | 📊 Self-Evaluation | Benchmarks its own quality |
 | 🛡️ Security | Approvals, vault, audit trail |
+| 📡 Remote Control | Paired devices monitor & control securely |
 
 ---
 
@@ -243,6 +245,7 @@ Afnan-Ai-1.2
 │   ├── workspace/           (secure isolated task workspaces)
 │   ├── computer/            (desktop automation runtime)
 │   ├── proactive/           (proactive suggestions)
+│   ├── control/             (remote & multi-device control plane)
 │   └── platform/
 │       ├── base.py          (PlatformAdapter interface)
 │       ├── factory.py       (auto-selects the adapter at runtime)
