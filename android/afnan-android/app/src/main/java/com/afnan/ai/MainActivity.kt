@@ -7,11 +7,11 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -29,12 +29,18 @@ import com.afnan.ai.ui.theme.AfnanTheme
  */
 class MainActivity : FragmentActivity() {
 
+    private companion object {
+        /** Must stay within the lower 16 bits (see note above). */
+        const val REQUEST_NOTIFICATION_PERMISSION = 1001
+    }
+
     private var pendingDeepLink by mutableStateOf<String?>(null)
 
-    private val notificationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
-            // Result is informational; notifications degrade gracefully.
-        }
+    // NOTE: Do NOT use registerForActivityResult() for permissions here.
+    // The ActivityResultRegistry generates request codes larger than 16 bits,
+    // which this project's old androidx.fragment FragmentActivity rejects
+    // with "Can only use lower 16 bits for requestCode" and crashes on launch.
+    // The classic API with a small request code is safe.
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Swap the splash theme for the real app theme before drawing.
@@ -66,7 +72,12 @@ class MainActivity : FragmentActivity() {
                 this, Manifest.permission.POST_NOTIFICATIONS,
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            // Fire-and-forget: notifications degrade gracefully without it.
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                REQUEST_NOTIFICATION_PERMISSION,
+            )
         }
 
         setContent {
