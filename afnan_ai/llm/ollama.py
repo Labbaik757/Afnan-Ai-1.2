@@ -1,8 +1,5 @@
-"""OllamaProvider — the existing local Ollama integration.
-
-This is the Ollama code that used to live inside the core agent,
-moved behind the :class:`~afnan_ai.llm.base.LLMProvider` interface
-without changing its behaviour:
+"""OllamaProvider — local Ollama integration behind the
+:class:`~afnan_ai.llm.base.LLMProvider` interface:
 
 * model ``llama3`` by default
 * one ``chat`` call with the user's prompt as a single user message
