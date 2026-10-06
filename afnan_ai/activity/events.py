@@ -26,7 +26,7 @@ def _now_iso() -> str:
 
 
 # -- event types ------------------------------------------------------
-# Mirrors the user's spec; loop/audit/artifact sources map into these.
+# Canonical event types; loop/audit/artifact sources map into these.
 
 TASK_CREATED = "task_created"
 TASK_STARTED = "task_started"
