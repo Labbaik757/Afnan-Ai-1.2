@@ -15,15 +15,29 @@ import androidx.security.crypto.MasterKey
  */
 class TokenStore(context: Context) {
 
-    private val prefs: SharedPreferences = EncryptedSharedPreferences.create(
-        context.applicationContext,
-        PREFS_NAME,
-        MasterKey.Builder(context.applicationContext)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build(),
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+    /**
+     * Encrypted prefs when the Android Keystore cooperates, plain
+     * prefs otherwise. `EncryptedSharedPreferences.create()` throws
+     * on devices with a broken or unavailable Keystore (seen on
+     * low-end hardware) — crashing at startup is worse than a
+     * degraded store, so we fall back instead of dying. Tokens
+     * stay out of logs either way.
+     */
+    private val prefs: SharedPreferences = runCatching {
+        EncryptedSharedPreferences.create(
+            context.applicationContext,
+            PREFS_NAME,
+            MasterKey.Builder(context.applicationContext)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build(),
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    }.getOrElse {
+        context.applicationContext.getSharedPreferences(
+            "$PREFS_NAME-fallback", Context.MODE_PRIVATE
+        )
+    }
 
     /** Base URL of the paired Afnan runtime, e.g. `https://pc:8765`. */
     var baseUrl: String?
