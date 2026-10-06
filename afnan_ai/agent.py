@@ -316,7 +316,7 @@ class AfnanAgent:
         )
         self._task_worker = None
         self._background_runner = None
-        # Placeholder: the SecurityCenter is built near the
+        # Deferred: the SecurityCenter is built near the
         # end of __init__ (after every tool family is
         # registered); consumers that accept it earlier
         # receive None and get wired when it exists.
