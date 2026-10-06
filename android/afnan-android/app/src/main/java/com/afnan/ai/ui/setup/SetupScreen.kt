@@ -93,7 +93,7 @@ fun SetupScreen(
             Column(Modifier.weight(1f)) {
                 Text("Use TLS (recommended)")
                 Text(
-                    "Plain HTTP is only allowed for development on loopback.",
+                    "Turn off for plain HTTP on your own network (dev only).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
