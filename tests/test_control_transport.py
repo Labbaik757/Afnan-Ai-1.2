@@ -759,8 +759,8 @@ class TransportSecurityTests(_TransportTestBase):
                 "/v1/pair/redeem",
                 body={"pairing_id": pid, "code": "000000"},
             )
-            # PairingError currently surfaces as HTTP 500.
-            self.assertEqual(status, 500)
+            # Wrong codes are client errors -> 400.
+            self.assertEqual(status, 400)
             # The real code is never echoed back.
             self.assertNotIn(
                 real_code, body.decode("utf-8", "replace")

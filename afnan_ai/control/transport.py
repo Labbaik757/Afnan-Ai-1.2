@@ -52,6 +52,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from afnan_ai.control.auth import AuthenticationError
+from afnan_ai.control.pairing import PairingError
+from afnan_ai.control.plane import ControlPlaneError
 
 
 def _is_loopback(host: str) -> bool:
@@ -447,6 +449,10 @@ class ControlHTTPHandler(BaseHTTPRequestHandler):
             self._error(400, str(e), request_id)
         except AuthenticationError as e:
             self._error(401, str(e), request_id)
+        except (PairingError, ControlPlaneError) as e:
+            # Client-side failures: bad metadata, wrong/expired/
+            # replayed pairing codes, unknown commands.
+            self._error(400, str(e), request_id)
         except PermissionError as e:
             self._error(403, str(e), request_id)
         except KeyError as e:
