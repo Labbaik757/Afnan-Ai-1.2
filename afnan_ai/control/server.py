@@ -28,6 +28,7 @@ class ControlPlaneServer:
         tls_cert: str | None = None,
         tls_key: str | None = None,
         allow_insecure: bool = False,
+        allow_insecure_lan: bool = False,
         owner_token_path: str | None = None,
     ) -> None:
         self.plane = plane
@@ -38,6 +39,7 @@ class ControlPlaneServer:
             tls_cert=tls_cert,
             tls_key=tls_key,
             allow_insecure=allow_insecure,
+            allow_insecure_lan=allow_insecure_lan,
             owner_token_path=owner_token_path,
         )
 
@@ -51,6 +53,7 @@ class ControlPlaneServer:
         tls_cert: str | None = None,
         tls_key: str | None = None,
         allow_insecure: bool = False,
+        allow_insecure_lan: bool = False,
         device_path: str | None = None,
         owner_token_path: str | None = None,
     ) -> "ControlPlaneServer":
@@ -98,6 +101,7 @@ class ControlPlaneServer:
             tls_cert=tls_cert,
             tls_key=tls_key,
             allow_insecure=allow_insecure,
+            allow_insecure_lan=allow_insecure_lan,
             owner_token_path=owner_token_path,
         )
 
