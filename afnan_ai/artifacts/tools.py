@@ -53,6 +53,10 @@ def _obj_schema(properties, required=None):
         "type": "object",
         "properties": properties,
         "required": required or [],
+        # Reject undeclared arguments at plan time so a bad
+        # argument fails validation instead of blowing up
+        # inside the tool at execution time.
+        "additionalProperties": False,
     }
 
 
