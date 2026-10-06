@@ -1,9 +1,8 @@
 """Provider registry — how the agent gets its default model.
 
-Today the only registered provider is the local Ollama one, exactly
-as before.  Registering a future local or cloud provider here (one
-line) makes it selectable via :func:`create_provider` without the
-agent's code changing at all.
+Ollama is the default local provider.  Registering another local
+or cloud provider here makes it selectable via
+:func:`create_provider` without the agent's code changing at all.
 """
 
 from __future__ import annotations
