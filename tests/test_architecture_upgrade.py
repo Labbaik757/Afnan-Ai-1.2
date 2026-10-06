@@ -1,4 +1,4 @@
-"""Phase-3 architecture upgrade tests.
+"""Agent loop, accessibility API, and planner upgrade tests.
 
 Covers the observation-driven agent loop (re-decided bounded
 batches, completion signal, step/LLM/replan/repeat/time limits,
