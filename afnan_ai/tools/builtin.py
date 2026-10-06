@@ -1,7 +1,5 @@
-"""Built-in tools — Afnan's existing capabilities as Tools.
-
-Each tool wraps the behaviour the agent already had, so existing
-functionality is preserved exactly:
+"""Built-in tools — the agent's standard capabilities
+(open URL/app, web search, screenshot) wrapped as Tools:
 
 * ``open_url`` — ``webbrowser.open(url)``
 * ``open_application`` — the platform adapter's ``launch_app``
