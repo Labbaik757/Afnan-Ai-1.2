@@ -1,4 +1,4 @@
-"""Tests for the Muse-style Artifact System.
+"""Tests for the Artifact System.
 
 Covers: creation (all builder types), update, versioning,
 rollback on failed update, corruption detection, content
