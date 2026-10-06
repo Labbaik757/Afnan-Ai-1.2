@@ -6,7 +6,7 @@ PyAudio==0.2.14
 PyAutoGUI==0.9.54
 pywhatkit==5.4
 ollama==0.6.1
-# Browser control (Phase 2): also run `playwright install chromium`
+# Browser control: also run `playwright install chromium`
 # once to download the browser binaries
 playwright>=1.40
 pyttsx3==2.99
