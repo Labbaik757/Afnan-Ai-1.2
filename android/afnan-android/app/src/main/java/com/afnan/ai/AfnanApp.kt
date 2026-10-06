@@ -59,6 +59,7 @@ class AfnanApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        installCrashReporter()
         Notifier.createChannels(this)
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         _themeMode.value = runCatching {
@@ -126,5 +127,51 @@ class AfnanApp : Application() {
         private const val KEY_THEME = "theme_mode"
         private const val KEY_APP_LOCK = "app_lock"
         private const val KEY_VOICE_RESPONSES = "voice_responses"
+
+        /** File holding the last uncaught exception's stack trace. */
+        const val CRASH_LOG = "afnan_crash.log"
+
+        fun readCrashLog(context: Context): String? {
+            val file = java.io.File(context.filesDir, CRASH_LOG)
+            if (!file.exists() || file.length() == 0L) return null
+            return runCatching { file.readText() }.getOrNull()
+        }
+
+        fun clearCrashLog(context: Context) {
+            runCatching {
+                java.io.File(context.filesDir, CRASH_LOG).delete()
+            }
+        }
+    }
+
+    /**
+     * Writes any uncaught exception's stack trace to [CRASH_LOG]
+     * before the process dies, so the next launch can show what
+     * actually crashed instead of a generic "keeps stopping".
+     */
+    private fun installCrashReporter() {
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            runCatching {
+                val trace = StringBuilder()
+                    .append(java.util.Date().toString())
+                    .append('\n')
+                    .append(throwable.toString())
+                    .append('\n')
+                var cause: Throwable? = throwable
+                while (cause != null) {
+                    for (element in cause.stackTrace.take(40)) {
+                        trace.append("    at ").append(element).append('\n')
+                    }
+                    cause = cause.cause
+                    if (cause != null) trace.append("Caused by: ").append(cause).append('\n')
+                }
+                java.io.File(filesDir, CRASH_LOG).writeText(trace.toString())
+            }
+            defaultHandler?.uncaughtException(thread, throwable)
+            if (defaultHandler == null) {
+                android.os.Process.killProcess(android.os.Process.myPid())
+            }
+        }
     }
 }
