@@ -222,9 +222,7 @@ class ToolRegistry:
                 )
 
         tool = self._tools.get(name)
-        # (already resolved above; kept for clarity)
 
-        decision = None
         actor_label = ""
         if center is not None:
             actor_label = (
