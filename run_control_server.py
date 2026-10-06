@@ -1,30 +1,26 @@
 """Start the Afnan Remote Control Plane so the Android app can pair.
 
-The phone reaches the PC over the local network, so TLS is required
-(insecure mode is refused on non-loopback addresses).
+Quick start (no certificates, local network only)::
 
-1. Find your PC's LAN IP, e.g. ``ipconfig`` on Windows.
-2. Create a self-signed certificate with that IP in the SAN
-   (Git Bash / Linux / macOS)::
+    python run_control_server.py --insecure-lan
 
-       openssl req -x509 -newkey rsa:2048 \\
-           -keyout afnan-key.pem -out afnan-cert.pem \\
-           -days 825 -nodes -subj "/CN=192.168.1.10" \\
-           -addext "subjectAltName=IP:192.168.1.10"
+Then in the app's setup screen enter ``http://<PC LAN IP>:8765``
+with TLS switched off and tap "Test connection & continue".
 
-   (Replace 192.168.1.10 with your PC's LAN IP.)
-3. Run this script from the repository root::
+TLS mode (recommended outside your own network)::
 
-       python run_control_server.py \\
-           --tls-cert afnan-cert.pem --tls-key afnan-key.pem
+    openssl req -x509 -newkey rsa:2048 \\
+        -keyout afnan-key.pem -out afnan-cert.pem \\
+        -days 825 -nodes -subj "/CN=192.168.1.10" \\
+        -addext "subjectAltName=IP:192.168.1.10"
+    python run_control_server.py \\
+        --tls-cert afnan-cert.pem --tls-key afnan-key.pem
 
-4. Install ``afnan-cert.pem`` on the phone
-   (Settings -> Security -> Install certificate) so the app trusts it.
-5. In the app's setup screen enter ``https://<PC LAN IP>:8765``,
-   keep TLS on, and tap "Test connection & continue".
-6. When the phone shows a pairing code, approve it on this PC::
+(Replace 192.168.1.10 with your PC's LAN IP from ``ipconfig``.)
 
-       python -m afnan_ai.control.approve_pairing
+Pairing: when the phone shows a pairing code, approve it on this PC::
+
+    python -m afnan_ai.control.approve_pairing
 
 Keep this window open while the phone is connected. Ctrl+C stops it.
 """
@@ -53,15 +49,25 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--tls-cert",
-        required=True,
-        help="Path to the PEM certificate file.",
+        default=None,
+        help="Path to the PEM certificate file (TLS mode).",
     )
     parser.add_argument(
         "--tls-key",
-        required=True,
-        help="Path to the PEM private-key file.",
+        default=None,
+        help="Path to the PEM private-key file (TLS mode).",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--insecure-lan",
+        action="store_true",
+        help="Serve plaintext HTTP on the local network without TLS. "
+        "Development only: anyone on this network can read traffic. "
+        "No certificate needed.",
+    )
+    args = parser.parse_args(argv)
+    if not args.insecure_lan and not (args.tls_cert and args.tls_key):
+        parser.error("pass --insecure-lan or both --tls-cert and --tls-key")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -78,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         port=args.port,
         tls_cert=args.tls_cert,
         tls_key=args.tls_key,
+        allow_insecure_lan=args.insecure_lan,
     )
     server.start()
     print(f"Afnan Control Plane listening on {server.url}")
