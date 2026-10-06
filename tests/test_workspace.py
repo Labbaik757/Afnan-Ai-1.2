@@ -424,7 +424,7 @@ class SnapshotTests(unittest.TestCase):
             ws.workspace_id,
             current_task="rec",
             completed_steps=["done-1"],
-            pending_steps=["todo-1", "todo-2"],
+            pending_steps=["pending-1", "pending-2"],
         )
         snap = m.recover(ws.workspace_id)
         assert snap is not None
@@ -432,7 +432,7 @@ class SnapshotTests(unittest.TestCase):
             m.get(ws.workspace_id).status, WorkspaceStatus.PAUSED
         )
         info = m.get(ws.workspace_id).metadata["recovery_info"]
-        self.assertEqual(info["incomplete_action"], "todo-1")
+        self.assertEqual(info["incomplete_action"], "pending-1")
         self.assertEqual(info["completed_steps"], ["done-1"])
 
     def test_restart_resumes_from_checkpoint(self):
@@ -443,7 +443,7 @@ class SnapshotTests(unittest.TestCase):
             ws.workspace_id,
             current_task="restart",
             completed_steps=["done-1"],
-            pending_steps=["todo-1"],
+            pending_steps=["pending-1"],
         )
         m.stop(ws.workspace_id)
         session = m.restart(ws.workspace_id)
