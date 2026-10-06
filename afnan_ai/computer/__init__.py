@@ -23,23 +23,75 @@ Secrets never reach logs, AgentState or long-term memory.
 """
 
 from afnan_ai.computer.backend import ComputerBackend
+from afnan_ai.computer.clipboard import ClipboardController
 from afnan_ai.computer.controller import ComputerController
+from afnan_ai.computer.dialogs import DialogHandler
+from afnan_ai.computer.display import DisplayManager
 from afnan_ai.computer.errors import ComputerError
 from afnan_ai.computer.files import FileService
+from afnan_ai.computer.integration import (
+    WorkspaceComputerScope,
+    attach_activity_center,
+    attach_emergency_stop,
+    emit_result,
+)
+from afnan_ai.computer.managers import (
+    ApplicationManager,
+    InputController,
+    WindowManager,
+)
 from afnan_ai.computer.models import (
     AppInfo,
+    ComputerAction,
+    ComputerActionResult,
     ComputerElement,
     ComputerObservation,
+    DialogInfo,
+    MonitorInfo,
     WindowInfo,
+)
+from afnan_ai.computer.recovery import CrashRecovery
+from afnan_ai.computer.runtime import (
+    ComputerRuntime,
+    ComputerRuntimeError,
+    RemoteComputerRuntime,
+)
+from afnan_ai.computer.screen import ScreenObserver
+from afnan_ai.computer.wait import (
+    WaitResult,
+    wait_for,
+    wait_for_stable,
 )
 
 __all__ = [
     "AppInfo",
+    "ApplicationManager",
+    "ClipboardController",
+    "ComputerAction",
+    "ComputerActionResult",
     "ComputerBackend",
     "ComputerController",
     "ComputerElement",
     "ComputerError",
     "ComputerObservation",
+    "ComputerRuntime",
+    "ComputerRuntimeError",
+    "CrashRecovery",
+    "DialogHandler",
+    "DialogInfo",
+    "DisplayManager",
     "FileService",
+    "InputController",
+    "MonitorInfo",
+    "RemoteComputerRuntime",
+    "ScreenObserver",
+    "WaitResult",
     "WindowInfo",
+    "WindowManager",
+    "WorkspaceComputerScope",
+    "attach_activity_center",
+    "attach_emergency_stop",
+    "emit_result",
+    "wait_for",
+    "wait_for_stable",
 ]
