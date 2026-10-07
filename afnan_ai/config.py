@@ -53,6 +53,19 @@ def _float_from_env(name: str, default: float) -> float:
     return value if value >= 0 else default
 
 
+def _bool_from_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    )
+
+
 @dataclass(frozen=True)
 class AgentConfig:
     """Runtime configuration for the assistant + Agent pipeline."""
@@ -73,6 +86,16 @@ class AgentConfig:
     #: after it fired but no command followed (background-noise
     #: false trigger). Prevents "Yes boss" spam in noisy rooms.
     wakeword_miss_cooldown: float = 10.0
+    #: Stay in conversation after one wake word: follow-up commands
+    #: don't need the wake word again until conversation_timeout
+    #: seconds of silence pass.
+    conversation_mode: bool = True
+    #: Seconds of silence before leaving conversation mode and
+    #: going back to the wake-word loop.
+    conversation_timeout: float = 60.0
+    #: Speak LLM replies sentence-by-sentence while they generate
+    #: instead of waiting for the full reply first.
+    stream_responses: bool = True
     #: Neural voice for Urdu TTS (edge-tts, no account).
     tts_urdu_voice: str = "ur-PK-GulNawazNeural"
     max_iterations: int = 10
@@ -109,6 +132,18 @@ class AgentConfig:
             wakeword_miss_cooldown=_float_from_env(
                 f"{prefix}WAKEWORD_MISS_COOLDOWN",
                 defaults.wakeword_miss_cooldown,
+            ),
+            conversation_mode=_bool_from_env(
+                f"{prefix}CONVERSATION_MODE",
+                defaults.conversation_mode,
+            ),
+            conversation_timeout=_float_from_env(
+                f"{prefix}CONVERSATION_TIMEOUT",
+                defaults.conversation_timeout,
+            ),
+            stream_responses=_bool_from_env(
+                f"{prefix}STREAM_RESPONSES",
+                defaults.stream_responses,
             ),
             tts_urdu_voice=os.environ.get(
                 f"{prefix}TTS_URDU_VOICE", defaults.tts_urdu_voice
