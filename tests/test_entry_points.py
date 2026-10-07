@@ -215,12 +215,22 @@ class TestFastPath(unittest.TestCase):
         agent.orchestrator.run = mock.Mock(
             side_effect=AssertionError("planner must not run")
         )
-        with mock.patch("webbrowser.open") as wb:
-            result = agent.handle_request("براؤزر اوپن کرو")
+        tool_calls = []
+        orig_execute = agent.tools.execute
+
+        def capture(name, arguments=None, **kwargs):
+            tool_calls.append((name, arguments or {}))
+            return mock.Mock(ok=True, success=True)
+
+        agent.tools.execute = capture
+        result = agent.handle_request("براؤزر اوپن کرو")
+        agent.tools.execute = orig_execute
         self.assertIsNone(result)
         self.assertIn("Opening browser", adapter.spoken)
-        wb.assert_called_once()
-        self.assertIn("google.com", str(wb.call_args).lower())
+        # Automation browser, not the user's personal browser.
+        names = [c[0] for c in tool_calls]
+        self.assertIn("browser_launch", names)
+        self.assertIn("browser_navigate", names)
 
     def test_chitchat_goes_to_chat_fallback(self):
         agent, adapter = make_assistant(StubLLM(reply="chat reply"))
