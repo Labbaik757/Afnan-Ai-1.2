@@ -4,6 +4,7 @@
 * model ``llama3`` by default
 * one ``chat`` call with the user's prompt as a single user message
 * the reply is ``response["message"]["content"]``
+* :meth:`chat_stream` yields content chunks with ``stream=True``
 
 The ``ollama`` Python package is imported lazily, and a client can
 be injected (``OllamaProvider(client=...)``), which is how the
@@ -13,7 +14,7 @@ paths without a running Ollama server.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 from afnan_ai.llm.base import (
@@ -91,6 +92,47 @@ class OllamaProvider(LLMProvider):
             ) from e
         return self._extract_content(response)
 
+    def chat_stream(
+        self, messages: Sequence[ChatMessage]
+    ) -> Iterator[str]:
+        """Yield reply text chunks as the model generates them.
+
+        Uses the Ollama client's ``stream=True`` mode.  Empty chunks
+        (heartbeats, the final ``done`` chunk) are skipped; a stream
+        that yields no content at all raises
+        :class:`LLMInvalidResponseError`.
+        """
+        client = self._get_client()
+        try:
+            stream = client.chat(
+                model=self.model,
+                messages=[dict(m) for m in messages],
+                stream=True,
+            )
+        except LLMError:
+            raise
+        except Exception as e:
+            raise LLMConnectionError(
+                f"Could not reach Ollama (model={self.model}): {e}"
+            ) from e
+        yielded_any = False
+        try:
+            for chunk in stream:
+                content = self._extract_stream_content(chunk)
+                if content:
+                    yielded_any = True
+                    yield content
+        except LLMError:
+            raise
+        except Exception as e:
+            raise LLMConnectionError(
+                f"Ollama stream failed (model={self.model}): {e}"
+            ) from e
+        if not yielded_any:
+            raise LLMInvalidResponseError(
+                "Ollama stream returned no content"
+            )
+
     # -- response parsing ---------------------------------------------------
     @staticmethod
     def _extract_content(response: Any) -> str:
@@ -117,3 +159,22 @@ class OllamaProvider(LLMProvider):
                 f"expected message.content text, got {response!r:.200}"
             )
         return content
+
+    @staticmethod
+    def _extract_stream_content(chunk: Any) -> str:
+        """Pull ``message.content`` from one stream chunk.
+
+        Unlike :meth:`_extract_content` this is tolerant: stream
+        chunks without text (heartbeats, the final ``done`` chunk)
+        yield ``""`` instead of raising.
+        """
+        content: Any = None
+        if isinstance(chunk, Mapping):
+            message = chunk.get("message")
+            if isinstance(message, Mapping):
+                content = message.get("content")
+        else:
+            message = getattr(chunk, "message", None)
+            if message is not None:
+                content = getattr(message, "content", None)
+        return content if isinstance(content, str) else ""
