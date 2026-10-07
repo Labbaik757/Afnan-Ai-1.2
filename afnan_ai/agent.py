@@ -89,6 +89,34 @@ def _split_complete_sentences(buffer: str) -> tuple[list[str], str]:
     return complete, parts[-1]
 
 
+# Invisible characters that speech-to-text engines sprinkle into
+# transcripts — Google's Urdu STT in particular inserts zero-width
+# joiners between words. They are invisible on the console, so a
+# heard command can *look* like a known phrase while failing every
+# substring match and silently falling through to the slow LLM
+# planning path. Normalize them (plus stray whitespace) in every
+# heard/typed command before matching.
+#
+# U+200B/U+200C/U+200D act as word separators in STT output, so they
+# become plain spaces; U+FEFF/U+00AD are removed outright.
+_INVISIBLE_SEPARATOR_RE = re.compile("[\u200b\u200c\u200d]")
+_INVISIBLE_REMOVE_RE = re.compile("[\ufeff\u00ad]")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalize_command_text(text: str) -> str:
+    """Normalize STT output for command matching.
+
+    Turns invisible word separators into spaces and collapses
+    whitespace, so "براؤزر‌اوپن‌کرو" (zero-width joiners, as Urdu
+    STT often returns) matches the same legacy patterns as
+    "براؤزر اوپن کرو".
+    """
+    text = _INVISIBLE_SEPARATOR_RE.sub(" ", text or "")
+    text = _INVISIBLE_REMOVE_RE.sub("", text)
+    return _WHITESPACE_RE.sub(" ", text).strip()
+
+
 class AfnanAgent:
     """Platform-agnostic voice assistant."""
 
@@ -1669,7 +1697,7 @@ What do you want me to do?
         or None when a session/legacy path handled the request.
         ("stop afnan" still raises SystemExit, as before.)
         """
-        text = (request or "").strip()
+        text = _normalize_command_text(request)
         if not text:
             return None
         lowered = text.lower()
@@ -1699,6 +1727,14 @@ What do you want me to do?
         # session state is only adopted once a plan actually
         # exists, so a planning failure (e.g. model offline) leaves
         # the session untouched for the legacy fallback below.
+        #
+        # This path is dark on the console and slow on weak
+        # hardware, so say so explicitly instead of leaving the
+        # user staring at a dead "heard:" line.
+        print(
+            "no quick command matched — asking the local AI "
+            "(slow on this PC, please wait)..."
+        )
         result = self.orchestrator.run(text)
         if result.status == OrchestrationStatus.PLANNING_FAILED:
             # The model could not plan (offline, invalid output…).
@@ -1908,8 +1944,11 @@ What do you want me to do?
     _CHAT_PATTERNS = (
         "assalam",
         "salam",
+        "سلام",
         "hello",
+        "ہیلو",
         "aoa",
+        "وعلیکم",
         "kya haal",
         "kia haal",
         "kesay ho",
@@ -1967,7 +2006,16 @@ What do you want me to do?
                 self.speak("Theek hai boss")
                 return
             last_active = time.time()
-            self.process_command(command)
+            try:
+                self.process_command(command)
+            except Exception:
+                # Never fail silently here: an unexpected error
+                # used to vanish into start()'s bare except and
+                # leave only a dead "heard:" line behind.
+                import traceback
+
+                traceback.print_exc()
+                print("command failed — listening again")
 
     def start(self) -> None:
         self.show_startup_gif()
@@ -2019,7 +2067,13 @@ What do you want me to do?
             except KeyboardInterrupt:
                 break
             except Exception:
-                pass
+                # Last-resort net: print instead of swallowing.
+                # Silent failures here once left the user with a
+                # dead "heard:" line and no clue what broke.
+                import traceback
+
+                traceback.print_exc()
+                print("(unexpected error — listening again)")
 
     def _wait_for_wake_local(
         self, detector, timeout_s: float = 120.0
