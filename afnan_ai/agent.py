@@ -1595,11 +1595,28 @@ What do you want me to do?
                 audio = self.recognizer.listen(
                     source, timeout=timeout, phrase_time_limit=phrase_time
                 )
-            return self.recognizer.recognize_google(
+        except Exception as e:
+            # Silence within the timeout is normal; a real mic
+            # failure (busy/missing device) is printed so it is
+            # never a silent infinite "Listening..." loop.
+            is_timeout = sr is not None and isinstance(
+                e, sr.WaitTimeoutError
+            )
+            if not is_timeout:
+                print(
+                    "microphone issue "
+                    f"({type(e).__name__}): mic busy or unavailable"
+                )
+            return ""
+        try:
+            command = self.recognizer.recognize_google(
                 audio, language=self.config.stt_language
             )
         except Exception:
             return ""
+        if command:
+            print(f"heard: {command}")
+        return command
 
     # -- music -----------------------------------------------------------------
     def play_song(self, command: str) -> None:
@@ -1871,6 +1888,10 @@ What do you want me to do?
                 timeout=7, phrase_time=8
             )
             if not command:
+                # Brief pause so a failing mic can never spin
+                # this into a tight loop hammering the audio
+                # driver.
+                time.sleep(0.5)
                 continue
             if any(
                 phrase in command.lower()
