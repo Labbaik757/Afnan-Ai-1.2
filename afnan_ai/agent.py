@@ -1419,11 +1419,34 @@ class AfnanAgent:
             html_file = "afnan_animation.html"
             with open(html_file, "w", encoding="utf-8") as f:
                 f.write(html_content)
-            webbrowser.open(Path(os.path.abspath(html_file)).as_uri())
-            print("✅ Afnan AI animation opened in browser")
+            self._open_animation_window(
+                Path(os.path.abspath(html_file)).as_uri()
+            )
+            print("✅ Afnan AI animation opened in app window")
         except Exception as e:
             print(f"❌ GIF Error: {e}")
             print("💡 Continuing without animation...")
+
+    def _open_animation_window(self, uri: str) -> None:
+        """Open the animation as a standalone app window.
+
+        Launches the system Chrome/Chromium in app mode (no tabs
+        or address bar) so Afnan feels like its own desktop app.
+        Falls back to the default browser when no Chromium-family
+        browser is found.
+        """
+        try:
+            from afnan_ai.browser.chromium_adapter import (
+                ChromiumAdapter,
+            )
+            exe = ChromiumAdapter.find_executable("chromium")
+        except Exception:
+            exe = None
+        if exe:
+            import subprocess
+            subprocess.Popen([exe, f"--app={uri}"])
+        else:
+            webbrowser.open(uri)
 
     # -- introduction ----------------------------------------------------
     def introduce_yourself(self) -> None:
