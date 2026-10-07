@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import scrolledtext, ttk
 
@@ -253,7 +254,7 @@ class AfnanGUI:
 
     # -- Browser --------------------------------------------------------------
     def _build_browser(self, f: tk.Frame) -> None:
-        tk.Label(f, text="🌐 Browser", bg=BG, fg=FG,
+        tk.Label(f, text="🌐 Browser — live view", bg=BG, fg=FG,
                  font=("Segoe UI", 14, "bold")).pack(anchor=tk.W,
                                                      pady=(0, 8))
         nav = tk.Frame(f, bg=BG)
@@ -276,17 +277,95 @@ class AfnanGUI:
         ctl.pack(fill=tk.X, pady=(0, 8))
         for label, cmd in (
             ("🚀 Launch", self.open_browser),
-            ("📸 Screenshot", self.take_screenshot),
+            ("👁 Live: OFF", self.toggle_live_view),
             ("📑 Tabs", self.browser_tabs),
             ("📄 Page info", self.browser_info),
         ):
-            tk.Button(ctl, text=label, command=cmd, bg=CARD, fg=FG,
-                      relief=tk.FLAT, padx=12).pack(side=tk.LEFT,
-                                                    padx=4)
+            btn = tk.Button(ctl, text=label, command=cmd, bg=CARD,
+                            fg=FG, relief=tk.FLAT, padx=12)
+            btn.pack(side=tk.LEFT, padx=4)
+            if "Live" in label:
+                self.live_btn = btn
+        # Split: live screenshot (left) + log (right).
+        split = tk.PanedWindow(f, orient=tk.HORIZONTAL, bg=BG)
+        split.pack(fill=tk.BOTH, expand=True)
+        view_frame = tk.Frame(split, bg=PANEL)
+        tk.Label(view_frame, text="👁 Live browser view", bg=PANEL,
+                 fg=DIM, font=("Segoe UI", 10)).pack(anchor=tk.W,
+                                                     padx=8, pady=4)
+        self.browser_view = tk.Label(view_frame, bg="#000000",
+                                     text="Browser not running\n\n"
+                                     "Click 🚀 Launch, then 👁 Live",
+                                     fg=DIM,
+                                     font=("Segoe UI", 11))
+        self.browser_view.pack(fill=tk.BOTH, expand=True,
+                               padx=8, pady=8)
+        split.add(view_frame, minsize=500)
+        log_frame = tk.Frame(split, bg=BG)
         self.browser_log = scrolledtext.ScrolledText(
-            f, bg=PANEL, fg=FG, font=("Consolas", 10),
-            wrap=tk.WORD, state=tk.DISABLED, height=18)
+            log_frame, bg=PANEL, fg=FG, font=("Consolas", 9),
+            wrap=tk.WORD, state=tk.DISABLED)
         self.browser_log.pack(fill=tk.BOTH, expand=True)
+        split.add(log_frame, minsize=250)
+        # Live view state.
+        self.live_view_on = False
+        self._live_img = None  # keep PhotoImage reference
+
+    def toggle_live_view(self) -> None:
+        self.live_view_on = not self.live_view_on
+        self.live_btn.config(
+            text=f"👁 Live: {'ON' if self.live_view_on else 'OFF'}")
+        if self.live_view_on:
+            self.blog("👁 live view started (refresh ~2s)")
+            threading.Thread(target=self._live_loop,
+                             daemon=True).start()
+        else:
+            self.blog("👁 live view stopped")
+
+    def _live_loop(self) -> None:
+        """Capture and display browser screenshots until toggled off."""
+        import io
+        try:
+            from PIL import Image, ImageTk
+        except ImportError:
+            self.activity_q.put("❌ Pillow missing for live view")
+            return
+        while self.live_view_on:
+            try:
+                res = self.agent.tools.execute(
+                    "browser_screenshot", {"full_page": False})
+                if not getattr(res, "ok", False):
+                    time.sleep(2)
+                    continue
+                data = getattr(res, "data", None)
+                # data may be bytes or a dict with image bytes.
+                img_bytes = None
+                if isinstance(data, bytes):
+                    img_bytes = data
+                elif isinstance(data, dict):
+                    for key in ("image", "screenshot", "png"):
+                        if isinstance(data.get(key), bytes):
+                            img_bytes = data[key]
+                            break
+                if img_bytes:
+                    img = Image.open(io.BytesIO(img_bytes))
+                    # Fit into ~640px wide.
+                    w, h = img.size
+                    scale = 640 / max(w, 1)
+                    img = img.resize(
+                        (640, int(h * scale)), Image.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                    self._live_img = photo  # prevent GC
+                    self.root.after(
+                        0, lambda p=photo: self.browser_view.config(
+                            image=p, text=""))
+            except Exception:
+                pass
+            # Wait ~2s between frames.
+            for _ in range(20):
+                if not self.live_view_on:
+                    break
+                time.sleep(0.1)
 
     def _browser_tool(self, name: str, args: dict | None = None) -> None:
         def _run() -> None:
