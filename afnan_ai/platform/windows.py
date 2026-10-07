@@ -17,15 +17,14 @@ class WindowsAdapter(PlatformAdapter):
     name = "windows"
 
     def speak_system(self, text: str) -> None:
-        safe_text = text.replace("'", "''")
-        ps_command = (
-            "Add-Type -AssemblyName System.Speech; "
-            f"(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{safe_text}')"
-        )
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps_command],
-            check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        # Maya-style: one blocking os.system() call to the OS-native
+        # TTS. No pyttsx3, no persistent engine, no subprocess
+        # management — simple and synchronous.
+        safe_text = text.replace("'", "''").replace('"', "")
+        os.system(
+            'powershell -NoProfile -Command "Add-Type -AssemblyName '
+            "System.Speech; (New-Object System.Speech.Synthesis."
+            f"SpeechSynthesizer).Speak('{safe_text}')\""
         )
 
     @property
