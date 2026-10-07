@@ -1728,7 +1728,15 @@ What do you want me to do?
                 self._legacy_chat_fallback(lowered)
                 return None
 
-        # 3) Delegate the actual task to the central Agent.  The
+        # 3) Free conversation vs. task: if the user is just talking
+        # (no action words), answer directly with the LLM — fast,
+        # no planning.  The user can say anything they want; only
+        # task-like requests go to the orchestrator.
+        if not self._looks_like_task(lowered):
+            self._legacy_chat_fallback(lowered)
+            return None
+
+        # 4) Delegate the actual task to the central Agent.  The
         # orchestrator runs with its own task state; the assistant's
         # session state is only adopted once a plan actually
         # exists, so a planning failure (e.g. model offline) leaves
@@ -1738,7 +1746,7 @@ What do you want me to do?
         # hardware, so say so explicitly instead of leaving the
         # user staring at a dead "heard:" line.
         print(
-            "no quick command matched — asking the local AI "
+            "task detected — asking the local AI "
             "(slow on this PC, please wait)..."
         )
         result = self.orchestrator.run(text)
@@ -1814,6 +1822,28 @@ What do you want me to do?
         """True for greetings/small talk: answered directly by the
         LLM with no planning overhead."""
         return any(p in command for p in AfnanAgent._CHAT_PATTERNS)
+
+    # Words that signal the user wants something DONE (a task for
+    # the orchestrator) rather than just talked about.  Anything
+    # else is free conversation and goes straight to the LLM —
+    # fast, no planning.  The user can say anything they want.
+    _TASK_HINTS = (
+        # English actions
+        "open", "launch", "start", "close", "search", "find",
+        "play", "download", "send", "type", "click", "press",
+        "screenshot", "volume", "mute", "shutdown", "restart",
+        "lock", "delete", "create", "make",
+        # Urdu actions (Latin + script)
+        "kholo", "khol", "band karo", "talash", "dhoondo",
+        "chalao", "bajao", "bhejo", "likho", "dabao",
+        "کھولو", "کھول", "بند", "تلاش", "ڈھونڈ", "چلاؤ",
+        "بجاؤ", "بھیجو", "لکھو", "دباؤ",
+    )
+
+    @staticmethod
+    def _looks_like_task(lowered: str) -> bool:
+        """True when the input asks for an action, not conversation."""
+        return any(h in lowered for h in AfnanAgent._TASK_HINTS)
 
     def _handle_legacy_command(self, command: str) -> bool:
         """Run one legacy direct command.  Returns True when a
