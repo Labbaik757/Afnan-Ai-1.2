@@ -1836,8 +1836,9 @@ What do you want me to do?
         # Urdu actions (Latin + script)
         "kholo", "khol", "band karo", "talash", "dhoondo",
         "chalao", "bajao", "bhejo", "likho", "dabao",
+        "bnao", "banao", "bnawo",
         "کھولو", "کھول", "بند", "تلاش", "ڈھونڈ", "چلاؤ",
-        "بجاؤ", "بھیجو", "لکھو", "دباؤ",
+        "بجاؤ", "بھیجو", "لکھو", "دباؤ", "بناؤ", "بناو",
     )
 
     @staticmethod
