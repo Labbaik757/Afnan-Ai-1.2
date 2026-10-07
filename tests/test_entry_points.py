@@ -171,13 +171,30 @@ class TestHandleRequestDelegatesToAgent(unittest.TestCase):
             tool_registry=registry,
         )
         agent.speak = lambda text: adapter.spoken.append(text)
-        result = agent.handle_request("Do the thing")
+        result = agent.handle_request("Open the thing")
         self.assertIsNotNone(result)
         self.assertEqual(result.status, OrchestrationStatus.FAILED)
         self.assertTrue(
             any("could not complete" in s for s in adapter.spoken)
         )
         self.assertEqual(agent.state.status, TaskStatus.FAILED)
+
+    def test_looks_like_task(self):
+        self.assertTrue(AfnanAgent._looks_like_task("open chrome please"))
+        self.assertTrue(AfnanAgent._looks_like_task("براؤزر کھولو"))
+        self.assertTrue(AfnanAgent._looks_like_task("screenshot lo"))
+        self.assertFalse(AfnanAgent._looks_like_task("arslan"))
+        self.assertFalse(AfnanAgent._looks_like_task("tell me a joke"))
+        self.assertFalse(AfnanAgent._looks_like_task("what is the meaning of life"))
+
+    def test_free_conversation_goes_to_llm_not_orchestrator(self):
+        agent, adapter = make_assistant(
+            StubLLM(reply="Arslan is a name, boss"),
+        )
+        result = agent.handle_request("arslan")
+        # Chat path returns None (no orchestration), speaks the reply.
+        self.assertIsNone(result)
+        self.assertIn("Arslan is a name, boss", adapter.spoken)
 
 
 class TestFastPath(unittest.TestCase):
@@ -227,8 +244,9 @@ class TestFastPath(unittest.TestCase):
             StubLLM(reply=CHROME_PLAN),
             config=AgentConfig(fast_path=False),
         )
-        result = agent.handle_request("kya haal hai")
-        # Not chitchat-fast-pathed: goes through the orchestrator.
+        result = agent.handle_request("open the pod bay doors")
+        # Task-like but not a known legacy command: with fast_path
+        # off it goes through the orchestrator, not the fast path.
         self.assertIsNotNone(result)
 
 
