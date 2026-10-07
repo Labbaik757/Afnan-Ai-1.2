@@ -38,6 +38,16 @@ class PlatformAdapter(ABC):
     def speak_system(self, text: str) -> None:
         """Speak *text* with the OS-native speech engine (fallback TTS)."""
 
+    @property
+    def prefers_system_speech(self) -> bool:
+        """True when OS-native speech should be tried before pyttsx3.
+
+        pyttsx3's SAPI wrapper can fail silently (no audio, no
+        error); on platforms where the native engine is proven,
+        prefer it.
+        """
+        return False
+
     # -- opening files / folders -------------------------------------
     @abstractmethod
     def open_path(self, path: str) -> None:
