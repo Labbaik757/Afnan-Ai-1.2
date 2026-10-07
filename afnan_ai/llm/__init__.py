@@ -19,11 +19,13 @@ from afnan_ai.llm.factory import (
     get_default_provider,
     register_provider,
 )
+from afnan_ai.llm.groq import GroqProvider
 from afnan_ai.llm.ollama import OllamaProvider
 
 __all__ = [
     "ChatMessage",
     "DEFAULT_PROVIDER",
+    "GroqProvider",
     "LLMConnectionError",
     "LLMError",
     "LLMInvalidResponseError",
