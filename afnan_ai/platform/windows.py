@@ -31,6 +31,49 @@ class WindowsAdapter(PlatformAdapter):
     def open_path(self, path: str) -> None:
         os.startfile(path)  # type: ignore[attr-defined]  # Windows only
 
+    def open_app_window(self, url: str) -> None:
+        """Open *url* in a Chrome app window (no tabs/address bar).
+
+        Falls back to the default browser when Chrome is not found.
+        """
+        from pathlib import Path
+
+        chrome = self._find_chrome()
+        if chrome:
+            subprocess.Popen(
+                [chrome, f"--app={url}"],
+                creationflags=getattr(
+                    subprocess, "CREATE_NO_WINDOW", 0
+                ),
+            )
+        else:
+            super().open_app_window(url)
+
+    @staticmethod
+    def _find_chrome() -> str | None:
+        """Locate chrome.exe in the standard install locations."""
+        from pathlib import Path
+
+        program_files = os.environ.get(
+            "ProgramFiles", r"C:\Program Files"
+        )
+        program_files_x86 = os.environ.get(
+            "ProgramFiles(x86)", r"C:\Program Files (x86)"
+        )
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        for base in (
+            program_files, program_files_x86, local_app_data
+        ):
+            if not base:
+                continue
+            candidate = (
+                Path(base) / "Google" / "Chrome"
+                / "Application" / "chrome.exe"
+            )
+            if candidate.is_file():
+                return str(candidate)
+        return shutil.which("chrome")
+
     def launch_app(self, app_key: str) -> bool:
         windows_apps = {
             "vscode": [["code"], ["cmd", "/c", "start", "", "code"]],
