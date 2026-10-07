@@ -552,6 +552,13 @@ class ChromiumAdapter(BrowserEngineAdapter):
                 "--no-default-browser-check",
                 "--disable-dev-shm-usage",
                 "--mute-audio",
+                # Stability flags: old/weak GPUs (e.g. Intel HD 4000)
+                # crash the GPU process on startup, killing the whole
+                # browser instantly (exit code 0).  --no-sandbox helps
+                # on locked-down Windows accounts.
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
             ]
             if state.options.get("user_agent"):
                 args.append(f"--user-agent={state.options['user_agent']}")
@@ -560,19 +567,30 @@ class ChromiumAdapter(BrowserEngineAdapter):
             if headless_flag:
                 args.append(headless_flag)
             args.append("about:blank")
+            # Capture stderr (not DEVNULL) so a startup crash tells us
+            # WHY instead of the generic "exited with code 0".
             process = subprocess.Popen(
                 args,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
             )
             state.process = process
             deadline = time.monotonic() + 20.0
             while time.monotonic() < deadline:
                 if process.poll() is not None:
+                    try:
+                        _, stderr_out = process.communicate(timeout=2)
+                    except Exception:
+                        stderr_out = ""
+                    stderr_tail = (stderr_out or "").strip().splitlines()
+                    stderr_tail = "\n".join(stderr_tail[-15:])
                     last_error = (
                         f"Chromium exited with code "
                         f"{process.returncode} (profile "
                         f"{state.name!r} may be locked or corrupted)"
+                        + (f"\nChromium stderr:\n{stderr_tail}"
+                           if stderr_tail else "")
                     )
                     break
                 try:
