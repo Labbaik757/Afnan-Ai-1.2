@@ -16,6 +16,7 @@ and no concrete model-client call, in this file.
 from __future__ import annotations
 
 import os
+import re
 import webbrowser
 from pathlib import Path
 
@@ -68,6 +69,24 @@ except Exception:
 GIF_PATH = "afnan_animation.gif"
 
 logger = get_logger(__name__)
+
+
+# Sentence terminators for streaming speech: Latin . ! ? plus the
+# Urdu full stop U+06D4 (۔).
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?۔])\s+")
+
+
+def _split_complete_sentences(buffer: str) -> tuple[list[str], str]:
+    """Split finished sentences off the front of a stream buffer.
+
+    Returns (complete_sentences, remainder): every sentence ending
+    in a terminator followed by whitespace is complete; the tail
+    (possibly an unfinished sentence) stays in the buffer.
+    """
+    parts = _SENTENCE_SPLIT_RE.split(buffer)
+    complete = [p.strip() for p in parts[:-1]]
+    complete = [p for p in complete if p]
+    return complete, parts[-1]
 
 
 class AfnanAgent:
@@ -1472,6 +1491,27 @@ What do you want me to do?
             self.speak("Error while opening folder")
 
     # -- AI (through the LLMProvider interface only) -----------------------
+    def _llm_failure_message(self, exc: Exception) -> str:
+        """User-facing message for an LLM failure.
+
+        Preserves the exact strings Afnan has always spoken; shared
+        by the blocking :meth:`ask_ai` path and the streaming path.
+        """
+        provider = self.llm
+        self._record_llm_failure(provider, str(exc))
+        if isinstance(exc, LLMUnavailableError):
+            return (
+                f"Sorry boss, AI is not available. "
+                f"{provider.display_name} is not installed."
+            )
+        logger.error(
+            "%s provider failed: %s", provider.display_name, exc
+        )
+        return (
+            f"Sorry boss, AI is not responding. "
+            f"Make sure {provider.display_name} is running."
+        )
+
     def ask_ai(self, prompt: str) -> str:
         """Ask the configured LLM provider and return its reply text.
 
@@ -1484,32 +1524,50 @@ What do you want me to do?
         provider = self.llm
         try:
             reply = provider.generate(prompt)
-        except LLMUnavailableError as e:
-            self._record_llm_failure(provider, str(e))
-            return (
-                f"Sorry boss, AI is not available. "
-                f"{provider.display_name} is not installed."
-            )
-        except (LLMConnectionError, LLMInvalidResponseError) as e:
-            logger.error("%s provider failed: %s", provider.display_name, e)
-            self._record_llm_failure(provider, str(e))
-            return (
-                f"Sorry boss, AI is not responding. "
-                f"Make sure {provider.display_name} is running."
-            )
-        except Exception as e:  # provider broke the interface contract
-            logger.error("%s provider failed: %s", provider.display_name, e)
-            self._record_llm_failure(provider, str(e))
-            return (
-                f"Sorry boss, AI is not responding. "
-                f"Make sure {provider.display_name} is running."
-            )
+        except Exception as e:  # includes provider contract breaks
+            return self._llm_failure_message(e)
 
         if self.state is not None and self.track_state:
             self.state.add_tool_result(
                 provider.name, success=True, output=reply
             )
         return reply
+
+    def _speak_streaming(self, prompt: str) -> None:
+        """Speak the LLM reply sentence-by-sentence as it generates.
+
+        Chunks stream from the provider; every finished sentence is
+        spoken immediately while the rest is still generating, so
+        the user hears the answer start much sooner than waiting
+        for the full reply.
+        """
+        provider = self.llm
+        messages = [{"role": "user", "content": prompt}]
+        try:
+            stream = provider.chat_stream(messages)
+            buffer = ""
+            spoke_any = False
+            for chunk in stream:
+                buffer += chunk
+                complete, buffer = _split_complete_sentences(
+                    buffer
+                )
+                for sentence in complete:
+                    spoke_any = True
+                    self.speak(sentence)
+        except Exception as e:
+            self.speak(self._llm_failure_message(e))
+            return
+        remainder = buffer.strip()
+        if remainder:
+            self.speak(remainder)
+        elif not spoke_any:
+            # Defensive: streamed nothing and raised nothing.
+            self.speak(
+                self._llm_failure_message(
+                    LLMInvalidResponseError("empty reply")
+                )
+            )
 
     def _record_llm_failure(self, provider: LLMProvider, error: str) -> None:
         if self.state is not None and self.track_state:
@@ -1767,8 +1825,11 @@ What do you want me to do?
         self._state_begin(command)
         try:
             self.speak("Thinking boss")
-            reply = self.ask_local_ai(command)
-            self.speak(reply)
+            if self.config.stream_responses:
+                self._speak_streaming(command)
+            else:
+                reply = self.ask_local_ai(command)
+                self.speak(reply)
             self._state_succeed(result="ok")
         except Exception as e:
             logger.error("command handling failed: %s", e)
@@ -1776,6 +1837,50 @@ What do you want me to do?
             self.speak("Error boss")
 
     # -- main loop ------------------------------------------------------------------
+    # Phrases that end conversation mode and return to the
+    # wake-word loop.
+    _GOODBYE_PHRASES = (
+        "khuda hafiz",
+        "alvida",
+        "goodbye",
+    )
+
+    def _conversation_loop(self) -> None:
+        """Stay in dialogue after a single wake word.
+
+        Follow-up commands don't need the wake word again: keep
+        listening and answering until ``conversation_timeout``
+        seconds of silence pass, or the user says a goodbye
+        phrase.  Then return to the wake-word loop.
+        """
+        import time
+
+        print(
+            "conversation mode: speak freely, "
+            "no wake word needed"
+        )
+        last_active = time.time()
+        while True:
+            if (
+                time.time() - last_active
+                >= self.config.conversation_timeout
+            ):
+                print("conversation mode ended (silence)")
+                return
+            command = self.listen_command(
+                timeout=7, phrase_time=8
+            )
+            if not command:
+                continue
+            if any(
+                phrase in command.lower()
+                for phrase in self._GOODBYE_PHRASES
+            ):
+                self.speak("Theek hai boss")
+                return
+            last_active = time.time()
+            self.process_command(command)
+
     def start(self) -> None:
         self.show_startup_gif()
         self.speak("Afnan is activated")
@@ -1803,6 +1908,9 @@ What do you want me to do?
                     if self.config.wake_word not in word.lower():
                         continue
                 self.speak("Yes boss")
+                if self.config.conversation_mode:
+                    self._conversation_loop()
+                    continue
                 command = self.listen_command(
                     timeout=7, phrase_time=8
                 )
