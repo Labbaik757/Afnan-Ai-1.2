@@ -1808,6 +1808,16 @@ What do you want me to do?
                 )
                 if command:
                     self.process_command(command)
+                else:
+                    # Wake word fired on background noise but no
+                    # command followed: pause before listening for
+                    # the wake word again so a noisy room doesn't
+                    # spam "Yes boss" in a tight loop.
+                    import time
+
+                    time.sleep(
+                        self.config.wakeword_miss_cooldown
+                    )
             except SystemExit:
                 break
             except KeyboardInterrupt:
