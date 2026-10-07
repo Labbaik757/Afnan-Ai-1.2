@@ -32,7 +32,7 @@ Provider contract
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 
@@ -79,6 +79,17 @@ class LLMProvider(ABC):
     def generate(self, prompt: str) -> str:
         """Single-prompt convenience wrapper around :meth:`chat`."""
         return self.chat([{"role": "user", "content": prompt}])
+
+    def chat_stream(
+        self, messages: Sequence[ChatMessage]
+    ) -> Iterator[str]:
+        """Yield reply text chunks as the model generates them.
+
+        The default implementation calls :meth:`chat` once and
+        yields the whole reply as a single chunk, so providers
+        without true streaming keep working unchanged.
+        """
+        yield self.chat(messages)
 
     @property
     def is_available(self) -> bool:
