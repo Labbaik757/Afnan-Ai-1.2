@@ -28,6 +28,12 @@ class WindowsAdapter(PlatformAdapter):
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
+    @property
+    def prefers_system_speech(self) -> bool:
+        # Native System.Speech is more reliable than pyttsx3's SAPI
+        # wrapper, which can go silently mute.
+        return True
+
     def open_path(self, path: str) -> None:
         os.startfile(path)  # type: ignore[attr-defined]  # Windows only
 
