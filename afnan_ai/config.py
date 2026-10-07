@@ -67,7 +67,12 @@ class AgentConfig:
     #: None → cloud fallback loop.
     wakeword_model: str | None = _bundled_wakeword_model()  # type: ignore[assignment]
     #: Confidence threshold for the on-device wake detector.
-    wakeword_threshold: float = 0.5
+    #: Higher = fewer false triggers on background noise.
+    wakeword_threshold: float = 0.7
+    #: Seconds to pause before listening for the wake word again
+    #: after it fired but no command followed (background-noise
+    #: false trigger). Prevents "Yes boss" spam in noisy rooms.
+    wakeword_miss_cooldown: float = 10.0
     #: Neural voice for Urdu TTS (edge-tts, no account).
     tts_urdu_voice: str = "ur-PK-GulNawazNeural"
     max_iterations: int = 10
@@ -100,6 +105,10 @@ class AgentConfig:
             wakeword_threshold=_float_from_env(
                 f"{prefix}WAKEWORD_THRESHOLD",
                 defaults.wakeword_threshold,
+            ),
+            wakeword_miss_cooldown=_float_from_env(
+                f"{prefix}WAKEWORD_MISS_COOLDOWN",
+                defaults.wakeword_miss_cooldown,
             ),
             tts_urdu_voice=os.environ.get(
                 f"{prefix}TTS_URDU_VOICE", defaults.tts_urdu_voice
