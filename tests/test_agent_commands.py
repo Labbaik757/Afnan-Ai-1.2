@@ -96,7 +96,7 @@ class TestExistingFeaturesPreserved(unittest.TestCase):
 
     def test_unknown_command_falls_back_to_ai(self):
         agent = make_agent()
-        agent.ask_local_ai = lambda prompt: "ai reply"
+        agent.llm.chat_stream = lambda messages: iter(["ai reply"])
         agent.process_command("what is the weather")
         self.assertIn("ai reply", agent.adapter.spoken)
 
