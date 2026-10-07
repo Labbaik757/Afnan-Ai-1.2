@@ -54,6 +54,18 @@ class PlatformAdapter(ABC):
         this platform (e.g. Safari on Windows).
         """
 
+    def open_app_window(self, url: str) -> None:
+        """Open *url* in a standalone app-like window.
+
+        Default implementation opens the URL in the default
+        browser.  Platforms override this when they can do better
+        (e.g. Chrome's ``--app`` mode: no tabs or address bar, so
+        the page feels like its own desktop app).
+        """
+        import webbrowser
+
+        webbrowser.open(url)
+
     # -- finding folders ----------------------------------------------
     def known_folder_path(self, foldername: str) -> Path | None:
         """Return a well-known user folder (Downloads, Desktop, ...)."""
