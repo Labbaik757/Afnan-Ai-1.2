@@ -21,8 +21,10 @@ from afnan_ai.llm.factory import (
 )
 from afnan_ai.llm.groq import GroqProvider
 from afnan_ai.llm.ollama import OllamaProvider
+from afnan_ai.llm.router import BrainRouter, classify_intent
 
 __all__ = [
+    "BrainRouter",
     "ChatMessage",
     "DEFAULT_PROVIDER",
     "GroqProvider",
@@ -33,6 +35,7 @@ __all__ = [
     "LLMUnavailableError",
     "OllamaProvider",
     "available_providers",
+    "classify_intent",
     "create_provider",
     "get_default_provider",
     "register_provider",
