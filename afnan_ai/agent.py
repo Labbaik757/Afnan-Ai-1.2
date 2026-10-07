@@ -1644,6 +1644,12 @@ What do you want me to do?
             return ""
         if command:
             print(f"heard: {command}")
+            # Let the audio driver fully release the mic before
+            # any speech: on some systems speaking too soon
+            # after closing the input stream produces silence.
+            import time
+
+            time.sleep(0.5)
         return command
 
     # -- music -----------------------------------------------------------------
@@ -2043,6 +2049,12 @@ What do you want me to do?
                         continue
                     if self.config.wake_word not in word.lower():
                         continue
+                # Let the audio driver fully release the mic before
+                # speaking (see listen_command): otherwise "Yes boss"
+                # can come out silent on some systems.
+                import time
+
+                time.sleep(0.5)
                 self.speak("Yes boss")
                 if self.config.conversation_mode:
                     self._conversation_loop()
