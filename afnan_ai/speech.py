@@ -141,16 +141,34 @@ def _play_audio(path: str) -> bool:
     return False
 
 
-def _speak_with_pyttsx3(text: str) -> None:
+def _get_engine():
+    """Return the shared pyttsx3 engine, initializing it once."""
     global _engine
-    import pyttsx3  # type: ignore
-
     if _engine is None:
+        import pyttsx3  # type: ignore
+
         _engine = pyttsx3.init()
         # Some systems start pyttsx3 nearly muted; force full volume.
         try:
             _engine.setProperty("volume", 1.0)
         except Exception:
             pass
-    _engine.say(text)
-    _engine.runAndWait()
+    return _engine
+
+
+def warm_up() -> None:
+    """Pre-initialize the TTS engine.
+
+    Call once at startup so the first speak() doesn't pay the
+    engine-initialization delay.
+    """
+    try:
+        _get_engine()
+    except Exception as e:
+        logger.warning("tts warm-up failed: %s", e)
+
+
+def _speak_with_pyttsx3(text: str) -> None:
+    engine = _get_engine()
+    engine.say(text)
+    engine.runAndWait()
