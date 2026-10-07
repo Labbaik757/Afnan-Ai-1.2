@@ -188,7 +188,7 @@ class ConfigTests(unittest.TestCase):
             self.assertTrue(
                 os.path.exists(config.wakeword_model)
             )
-        self.assertEqual(config.wakeword_threshold, 0.5)
+        self.assertEqual(config.wakeword_threshold, 0.7)
         self.assertEqual(
             config.tts_urdu_voice, "ur-PK-GulNawazNeural"
         )
@@ -216,7 +216,7 @@ class ConfigTests(unittest.TestCase):
             os.environ, {"AFNAN_WAKEWORD_THRESHOLD": "nope"}
         ):
             config = AgentConfig.from_env()
-        self.assertEqual(config.wakeword_threshold, 0.5)
+        self.assertEqual(config.wakeword_threshold, 0.7)
 
 
 class AgentVoiceWiringTests(unittest.TestCase):
