@@ -51,11 +51,14 @@ class TestWindowsAdapter(unittest.TestCase):
         self.assertFalse(self.adapter.launch_app("safari"))
 
     def test_speak_uses_powershell(self):
-        with mock.patch("subprocess.run") as run:
+        # Maya-style: single blocking os.system() call to the
+        # OS-native TTS.
+        with mock.patch("os.system") as system:
             self.adapter.speak_system("hello")
-            args = str(run.call_args)
+            args = str(system.call_args)
             self.assertIn("powershell", args)
             self.assertIn("System.Speech", args)
+            self.assertIn("hello", args)
 
 
 class TestMacOSAdapter(unittest.TestCase):
