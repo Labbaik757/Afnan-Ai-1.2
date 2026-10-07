@@ -22,9 +22,12 @@ from afnan_ai.llm.base import (
 
 _API_URL = "https://api.groq.com/openai/v1/chat/completions"
 _MODELS_URL = "https://api.groq.com/openai/v1/models"
-# Preferred big models, in order.  Resolved against the live
+# Preferred chat models, in order.  Resolved against the live
 # /models endpoint so retired names never break us.
 _PREFERRED_MODELS = (
+    "openai/gpt-oss-120b",
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-20b",
     "llama-3.3-70b-versatile",
     "llama-3.1-70b-versatile",
     "llama3-70b-8192",
@@ -33,7 +36,7 @@ _PREFERRED_MODELS = (
     "mixtral-8x7b-32768",
     "gemma2-9b-it",
 )
-_DEFAULT_MODEL = "llama-3.1-8b-instant"  # last-resort fallback
+_DEFAULT_MODEL = "openai/gpt-oss-20b"  # last-resort fallback
 _TIMEOUT = 60
 
 
