@@ -74,6 +74,9 @@ class AgentConfig:
     max_recovery_attempts: int = 2
     llm_provider: str = "ollama"
     llm_model: str = "llama3"
+    #: Remote Ollama server URL (e.g. a GPU machine or Google Colab
+    #: tunnel).  None → local Ollama at localhost:11434.
+    llm_host: str | None = None
     gif_path: str = "afnan_animation.gif"
     #: Where the Afnan Browser Runtime persists profiles and
     #: session state.  None → ~/.afnan-ai/browser-runtime.
@@ -114,6 +117,9 @@ class AgentConfig:
             llm_model=os.environ.get(
                 f"{prefix}LLM_MODEL", defaults.llm_model
             ),
+            llm_host=os.environ.get(
+                f"{prefix}LLM_HOST", defaults.llm_host
+            ) or None,
             gif_path=os.environ.get(
                 f"{prefix}GIF_PATH", defaults.gif_path
             ),
