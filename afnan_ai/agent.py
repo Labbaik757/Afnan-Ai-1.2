@@ -168,6 +168,9 @@ class AfnanAgent:
     ):
         self.adapter = adapter or get_adapter()
         self.recognizer = sr.Recognizer() if sr is not None else None
+        # Multi-turn flows (e.g. Facebook signup): when active, the
+        # next user input is treated as the awaited field value.
+        self._signup_state: dict | None = None
         # Capabilities run through the central ToolRegistry
         # (open_url, open_application, search_google, ...).  Pass a
         # registry to add/replace tools without changing agent code.
@@ -1708,6 +1711,17 @@ What do you want me to do?
             return None
         lowered = text.lower()
 
+        # 0) Multi-turn flows first: if a signup is in progress,
+        # this input is the awaited field value — not a new request.
+        if self._signup_state is not None:
+            self._handle_signup_step(text)
+            return None
+
+        # 0b) Facebook signup trigger: do it, don't explain it.
+        if self._is_signup_request(lowered):
+            self._start_signup()
+            return None
+
         # 1) Session control — preserved, handled directly
         if (
             "stop afnan" in lowered
@@ -1776,6 +1790,126 @@ What do you want me to do?
         routing as an isolated fallback.
         """
         return self.handle_request(command)
+
+    # -- Facebook signup (multi-turn, DOES the work) --------------------
+    # Instead of explaining how to sign up, the assistant opens the
+    # browser, goes to the signup page, and fills each field as the
+    # user provides it.  Never submits — the user reviews and clicks
+    # Sign Up themselves (and solves any CAPTCHA).
+    _SIGNUP_URL = "https://www.facebook.com/r.php"
+    _SIGNUP_FIELDS = (
+        ("first_name", "Apna *first name* batao",
+         'input[name="firstname"]'),
+        ("last_name", "Apna *last name* batao",
+         'input[name="lastname"]'),
+        ("email", "Email ya phone number batao",
+         'input[name="reg_email__"]'),
+        ("password", "Password batao (kam az kam 6 harf)",
+         'input[name="reg_passwd__"]'),
+    )
+    _SIGNUP_TRIGGERS = (
+        "facebook signup", "facebook sign up", "signup facebook",
+        "facebook account banao", "facebook account bnao",
+        "fill facebook",
+    )
+
+    @staticmethod
+    def _is_signup_request(lowered: str) -> bool:
+        return "facebook" in lowered and any(
+            t in lowered for t in AfnanAgent._SIGNUP_TRIGGERS
+        )
+
+    def _start_signup(self) -> None:
+        """Open the browser on the FB signup page; ask for field 1."""
+        self._state_begin("facebook signup")
+        self.speak("Facebook signup khol raha hoon")
+        try:
+            self.tools.execute(
+                "browser_launch", {"browser": "chrome"})
+        except Exception:
+            pass
+        result = self.tools.execute(
+            "browser_navigate", {"url": self._SIGNUP_URL})
+        if not result.ok:
+            self.speak("Browser nahin khul saka boss")
+            self._state_fail("browser launch failed")
+            return
+        self._signup_state = {"idx": 0}
+        self._state_succeed(result="ok")
+        _field, prompt, _sel = self._SIGNUP_FIELDS[0]
+        self.speak(prompt)
+
+    def _handle_signup_step(self, text: str) -> None:
+        """Fill one signup field with the user's reply; prompt next."""
+        state = self._signup_state
+        if state is None:
+            return
+        lowered = text.lower().strip()
+        if lowered in ("cancel", "stop", "ruk jao", "rehne do"):
+            self._signup_state = None
+            self.speak("Signup rok diya")
+            return
+        idx = state["idx"]
+        if idx < len(self._SIGNUP_FIELDS):
+            _field, _prompt, selector = self._SIGNUP_FIELDS[idx]
+            value = text.strip()
+            res = self.tools.execute(
+                "browser_type",
+                {"selector": selector, "text": value,
+                 "clear_first": True},
+            )
+            if not res.ok:
+                self.speak("Ye field nahin bhar saka, dobara batao")
+                return
+            state["idx"] = idx + 1
+            if state["idx"] < len(self._SIGNUP_FIELDS):
+                _f2, prompt2, _s2 = self._SIGNUP_FIELDS[state["idx"]]
+                self.speak(prompt2)
+            else:
+                self.speak(
+                    "Birthday batao (din mahina saal, jaise: 15 3 1990)")
+            return
+        # Birthday step.
+        if idx == len(self._SIGNUP_FIELDS):
+            parts = text.strip().split()
+            if len(parts) != 3 or not all(p.isdigit() for p in parts):
+                self.speak("Samajh nahin aaya. Jaise: 15 3 1990")
+                return
+            day, month, year = parts
+            ok = True
+            for sel, val in (
+                ('select[name="birthday_day"]', str(int(day))),
+                ('select[name="birthday_month"]', str(int(month))),
+                ('select[name="birthday_year"]', year),
+            ):
+                res = self.tools.execute(
+                    "browser_select_option",
+                    {"selector": sel, "value": val})
+                ok = ok and res.ok
+            if not ok:
+                self.speak("Birthday set nahin hui, dobara batao")
+                return
+            state["idx"] = idx + 1
+            self.speak("Gender batao (male ya female)")
+            return
+        # Gender step.
+        if "female" in lowered or "larki" in lowered or "aurat" in lowered:
+            val = "1"
+        elif "male" in lowered or "larka" in lowered or "mard" in lowered:
+            val = "2"
+        else:
+            self.speak("Male ya female batao")
+            return
+        res = self.tools.execute(
+            "browser_click",
+            {"selector": f'input[name="sex"][value="{val}"]'})
+        if not res.ok:
+            self.speak("Gender select nahin hua, dobara batao")
+            return
+        self._signup_state = None
+        self.speak(
+            "Form bhar diya boss! ✅ Browser mein dekh lo — "
+            "sab theek lage to khud Sign Up dabao.")
 
     # -- LEGACY direct routing (isolated, not yet migrated to tools) --------
     # The command patterns below predate the Tool system.  Some of
