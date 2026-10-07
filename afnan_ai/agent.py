@@ -1789,6 +1789,9 @@ What do you want me to do?
     # -- main loop ------------------------------------------------------------------
     def start(self) -> None:
         self.show_startup_gif()
+        # Warm up the voice engine now so the first spoken line
+        # doesn't pay the initialization delay.
+        _speech.warm_up()
         self.speak("Afnan is activated")
         from afnan_ai.wakeword import create_detector
 
