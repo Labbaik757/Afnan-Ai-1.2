@@ -383,5 +383,261 @@ class AgentVoiceWiringTests(unittest.TestCase):
         self.assertGreater(det.calls, 0)
 
 
+class ConversationModeTests(unittest.TestCase):
+    def _make_agent(self):
+        from afnan_ai.agent import AfnanAgent
+        from afnan_ai.platform.base import PlatformAdapter
+
+        class FakeAdapter(PlatformAdapter):
+            name = "linux"
+
+            def speak_system(self, text):
+                pass
+
+            def open_path(self, path):
+                pass
+
+            def launch_app(self, app_key):
+                return True
+
+            def find_folder(self, foldername):
+                return None
+
+        agent = AfnanAgent(adapter=FakeAdapter())
+        agent.speak = lambda text: None
+        return agent
+
+    def test_conversation_defaults(self):
+        config = AgentConfig()
+        self.assertTrue(config.conversation_mode)
+        self.assertEqual(config.conversation_timeout, 60.0)
+        self.assertTrue(config.stream_responses)
+
+    def test_conversation_env_overrides(self):
+        env = {
+            "AFNAN_CONVERSATION_MODE": "false",
+            "AFNAN_CONVERSATION_TIMEOUT": "30",
+            "AFNAN_STREAM_RESPONSES": "0",
+        }
+        with mock.patch.dict(os.environ, env):
+            config = AgentConfig.from_env()
+        self.assertFalse(config.conversation_mode)
+        self.assertEqual(config.conversation_timeout, 30.0)
+        self.assertFalse(config.stream_responses)
+
+    def test_conversation_bad_values_fall_back(self):
+        env = {
+            "AFNAN_CONVERSATION_MODE": "maybe",
+            "AFNAN_CONVERSATION_TIMEOUT": "nope",
+        }
+        with mock.patch.dict(os.environ, env):
+            config = AgentConfig.from_env()
+        # "maybe" is not a truthy token -> False is the parsed
+        # value; invalid timeout falls back to the default.
+        self.assertFalse(config.conversation_mode)
+        self.assertEqual(config.conversation_timeout, 60.0)
+
+    def test_goodbye_ends_conversation(self):
+        agent = self._make_agent()
+        handled = []
+        agent.process_command = lambda cmd: handled.append(cmd)
+        spoken = []
+        agent.speak = spoken.append
+        with mock.patch.object(
+            agent, "listen_command", side_effect=["kya haal hai", "khuda hafiz"]
+        ):
+            agent._conversation_loop()
+        self.assertEqual(handled, ["kya haal hai"])
+        self.assertIn("Theek hai boss", spoken)
+
+    def test_silence_timeout_ends_conversation(self):
+        agent = self._make_agent()
+        agent.config = AgentConfig(conversation_timeout=0)
+        with mock.patch.object(
+            agent, "listen_command", side_effect=AssertionError("no listen")
+        ):
+            agent._conversation_loop()  # returns immediately
+
+    def test_empty_listens_keep_conversation_alive(self):
+        agent = self._make_agent()
+        agent.config = AgentConfig(conversation_timeout=60)
+        handled = []
+        agent.process_command = lambda cmd: handled.append(cmd)
+        calls = {"n": 0}
+
+        def fake_listen(timeout=7, phrase_time=8):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                return ""
+            return "alvida"
+
+        with mock.patch.object(agent, "listen_command", fake_listen):
+            agent._conversation_loop()
+        self.assertEqual(handled, [])
+        self.assertEqual(calls["n"], 3)
+
+
+class SentenceSplitTests(unittest.TestCase):
+    def test_splits_complete_sentences(self):
+        from afnan_ai.agent import _split_complete_sentences
+
+        complete, rest = _split_complete_sentences(
+            "Hello boss. How are you?"
+        )
+        self.assertEqual(complete, ["Hello boss."])
+        self.assertEqual(rest, "How are you?")
+
+    def test_multiple_sentences(self):
+        from afnan_ai.agent import _split_complete_sentences
+
+        complete, rest = _split_complete_sentences("One. Two. Three")
+        self.assertEqual(complete, ["One.", "Two."])
+        self.assertEqual(rest, "Three")
+
+    def test_urdu_full_stop(self):
+        from afnan_ai.agent import _split_complete_sentences
+
+        complete, rest = _split_complete_sentences(
+            "آپ کیسے ہیں۔ میں ٹھیک ہوں"
+        )
+        self.assertEqual(complete, ["آپ کیسے ہیں۔"])
+        self.assertEqual(rest, "میں ٹھیک ہوں")
+
+    def test_no_terminator_keeps_buffer(self):
+        from afnan_ai.agent import _split_complete_sentences
+
+        complete, rest = _split_complete_sentences("hello there")
+        self.assertEqual(complete, [])
+        self.assertEqual(rest, "hello there")
+
+    def test_empty_buffer(self):
+        from afnan_ai.agent import _split_complete_sentences
+
+        complete, rest = _split_complete_sentences("   ")
+        self.assertEqual(complete, [])
+        self.assertEqual(rest, "   ")
+
+
+class StreamingSpeakTests(unittest.TestCase):
+    def _make_agent(self, provider):
+        from afnan_ai.agent import AfnanAgent
+        from afnan_ai.platform.base import PlatformAdapter
+
+        class FakeAdapter(PlatformAdapter):
+            name = "linux"
+
+            def speak_system(self, text):
+                pass
+
+            def open_path(self, path):
+                pass
+
+            def launch_app(self, app_key):
+                return True
+
+            def find_folder(self, foldername):
+                return None
+
+        agent = AfnanAgent(adapter=FakeAdapter(), llm_provider=provider)
+        spoken = []
+        agent.speak = spoken.append
+        return agent, spoken
+
+    def test_speaks_sentence_by_sentence(self):
+        from afnan_ai.llm.base import LLMProvider
+
+        class StreamProvider(LLMProvider):
+            name = "stream"
+
+            def chat(self, messages):
+                return "Hello boss. How are you?"
+
+            def chat_stream(self, messages):
+                yield "Hello boss. "
+                yield "How are "
+                yield "you?"
+
+        agent, spoken = self._make_agent(StreamProvider())
+        agent._speak_streaming("hi")
+        self.assertEqual(spoken, ["Hello boss.", "How are you?"])
+
+    def test_urdu_streaming(self):
+        from afnan_ai.llm.base import LLMProvider
+
+        class StreamProvider(LLMProvider):
+            name = "stream"
+
+            def chat(self, messages):
+                return "x"
+
+            def chat_stream(self, messages):
+                yield "آپ کیسے ہیں۔ "
+                yield "میں ٹھیک ہوں"
+
+        agent, spoken = self._make_agent(StreamProvider())
+        agent._speak_streaming("hi")
+        self.assertEqual(spoken, ["آپ کیسے ہیں۔", "میں ٹھیک ہوں"])
+
+    def test_stream_error_speaks_sorry(self):
+        from afnan_ai.llm import LLMConnectionError
+        from afnan_ai.llm.base import LLMProvider
+
+        class FailProvider(LLMProvider):
+            name = "fail"
+            display_name = "Ollama"
+
+            def chat(self, messages):
+                raise LLMConnectionError("down")
+
+            def chat_stream(self, messages):
+                raise LLMConnectionError("down")
+                yield  # pragma: no cover - generator
+
+        agent, spoken = self._make_agent(FailProvider())
+        agent._speak_streaming("hi")
+        self.assertEqual(len(spoken), 1)
+        self.assertIn("Sorry boss, AI is not responding", spoken[0])
+
+    def test_fallback_uses_streaming_when_enabled(self):
+        from afnan_ai.llm.base import LLMProvider
+
+        class StreamProvider(LLMProvider):
+            name = "stream"
+
+            def chat(self, messages):
+                return "nope"
+
+            def chat_stream(self, messages):
+                yield "streamed. ok"
+
+        agent, spoken = self._make_agent(StreamProvider())
+        agent.config = AgentConfig(stream_responses=True)
+        agent._state_begin = lambda command: None
+        agent._state_succeed = lambda result=None: None
+        agent._legacy_chat_fallback("hello")
+        # "Thinking boss" + streamed sentences
+        self.assertEqual(spoken[0], "Thinking boss")
+        self.assertIn("streamed.", spoken[1:])
+
+    def test_fallback_blocking_when_streaming_disabled(self):
+        from afnan_ai.llm.base import LLMProvider
+
+        class StreamProvider(LLMProvider):
+            name = "stream"
+
+            def chat(self, messages):
+                return "blocking reply"
+
+            def chat_stream(self, messages):
+                yield "should not be used"
+
+        agent, spoken = self._make_agent(StreamProvider())
+        agent.config = AgentConfig(stream_responses=False)
+        agent._state_begin = lambda command: None
+        agent._state_succeed = lambda result=None: None
+        agent._legacy_chat_fallback("hello")
+        self.assertEqual(spoken, ["Thinking boss", "blocking reply"])
+
+
 if __name__ == "__main__":
     unittest.main()
