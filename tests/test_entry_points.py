@@ -2,11 +2,13 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from afnan_ai import Agent
 from afnan_ai.agent import AfnanAgent
+from afnan_ai.config import AgentConfig
 from afnan_ai.executor import Executor
 from afnan_ai.llm.base import LLMConnectionError, LLMProvider
 from afnan_ai.orchestrator import OrchestrationStatus
@@ -139,7 +141,10 @@ class TestVoiceIndependentAgentInvocation(unittest.TestCase):
 
 class TestHandleRequestDelegatesToAgent(unittest.TestCase):
     def test_successful_task_completion(self):
-        agent, adapter = make_assistant(StubLLM(reply=CHROME_PLAN))
+        agent, adapter = make_assistant(
+            StubLLM(reply=CHROME_PLAN),
+            config=AgentConfig(fast_path=False),
+        )
         result = agent.handle_request("Open Chrome please")
         self.assertIsNotNone(result)
         self.assertEqual(result.status, OrchestrationStatus.COMPLETED)
@@ -148,7 +153,10 @@ class TestHandleRequestDelegatesToAgent(unittest.TestCase):
         self.assertIs(agent.state, result.state)
 
     def test_typed_request_uses_same_path(self):
-        agent, adapter = make_assistant(StubLLM(reply=CHROME_PLAN))
+        agent, adapter = make_assistant(
+            StubLLM(reply=CHROME_PLAN),
+            config=AgentConfig(fast_path=False),
+        )
         result = agent.process_command("Open Chrome please")
         self.assertIsNotNone(result)
         self.assertEqual(result.status, OrchestrationStatus.COMPLETED)
@@ -170,6 +178,58 @@ class TestHandleRequestDelegatesToAgent(unittest.TestCase):
             any("could not complete" in s for s in adapter.spoken)
         )
         self.assertEqual(agent.state.status, TaskStatus.FAILED)
+
+
+class TestFastPath(unittest.TestCase):
+    """Simple commands skip LLM planning when fast_path is on."""
+
+    def test_legacy_command_bypasses_orchestrator(self):
+        agent, adapter = make_assistant(StubLLM(reply="unused"))
+        agent.orchestrator.run = mock.Mock(
+            side_effect=AssertionError("planner must not run")
+        )
+        result = agent.handle_request("Open Chrome please")
+        self.assertIsNone(result)
+        self.assertEqual(adapter.launched, ["chrome"])
+        self.assertIn("Opening Chrome", adapter.spoken)
+
+    def test_urdu_open_browser(self):
+        agent, adapter = make_assistant(StubLLM(reply="unused"))
+        agent.orchestrator.run = mock.Mock(
+            side_effect=AssertionError("planner must not run")
+        )
+        with mock.patch("webbrowser.open") as wb:
+            result = agent.handle_request("براؤزر اوپن کرو")
+        self.assertIsNone(result)
+        self.assertIn("Opening browser", adapter.spoken)
+        wb.assert_called_once()
+        self.assertIn("google.com", str(wb.call_args).lower())
+
+    def test_chitchat_goes_to_chat_fallback(self):
+        agent, adapter = make_assistant(StubLLM(reply="chat reply"))
+        agent.orchestrator.run = mock.Mock(
+            side_effect=AssertionError("planner must not run")
+        )
+        result = agent.handle_request("kya haal hai")
+        self.assertIsNone(result)
+        self.assertIn("Thinking boss", adapter.spoken)
+        self.assertIn("chat reply", adapter.spoken)
+
+    def test_chitchat_urdu(self):
+        self.assertTrue(AfnanAgent._is_chitchat("کیا حال ہے"))
+        self.assertTrue(AfnanAgent._is_chitchat("assalamualaikum"))
+        self.assertTrue(AfnanAgent._is_chitchat("shukriya boss"))
+        self.assertFalse(AfnanAgent._is_chitchat("open chrome"))
+        self.assertFalse(AfnanAgent._is_chitchat("research python"))
+
+    def test_fast_path_can_be_disabled(self):
+        agent, adapter = make_assistant(
+            StubLLM(reply=CHROME_PLAN),
+            config=AgentConfig(fast_path=False),
+        )
+        result = agent.handle_request("kya haal hai")
+        # Not chitchat-fast-pathed: goes through the orchestrator.
+        self.assertIsNotNone(result)
 
 
 class TestBackwardCompatibility(unittest.TestCase):
