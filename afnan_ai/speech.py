@@ -41,6 +41,14 @@ def speak(
     if contains_urdu(text):
         if _speak_urdu(text, voice=urdu_voice or DEFAULT_URDU_VOICE):
             return
+    # Where the OS-native engine is preferred (Windows), try it
+    # first: pyttsx3 can fail silently with no audio at all.
+    if getattr(adapter, "prefers_system_speech", False):
+        try:
+            adapter.speak_system(text)
+            return
+        except Exception as e:
+            logger.warning("system speech failed: %s", e)
     try:
         _speak_with_pyttsx3(text)
     except Exception:
