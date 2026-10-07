@@ -13,6 +13,7 @@ Usage:
 """
 
 from afnan_ai.agent import AfnanAgent, create_agent
+from afnan_ai.config import AgentConfig
 from afnan_ai.executor import Executor
 from afnan_ai.llm import LLMProvider
 from afnan_ai.planner import Planner, TaskPlan
@@ -21,9 +22,11 @@ from afnan_ai.state import AgentState
 from afnan_ai.tools import Tool, ToolRegistry
 from afnan_ai.verifier import Verifier
 
-# Default agent + adapter for this machine (auto-selected at runtime)
+# Default agent + adapter for this machine (auto-selected at runtime).
+# Config comes from AFNAN_* environment variables when set
+# (e.g. AFNAN_LLM_MODEL to switch the Ollama model).
 adapter = get_adapter()
-_agent = AfnanAgent(adapter=adapter)
+_agent = AfnanAgent(adapter=adapter, config=AgentConfig.from_env())
 
 # Backwards-compatible module state (previous main.py exposed these)
 SYSTEM = adapter.name
