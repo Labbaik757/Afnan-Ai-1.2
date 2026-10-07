@@ -1832,13 +1832,14 @@ What do you want me to do?
         "open", "launch", "start", "close", "search", "find",
         "play", "download", "send", "type", "click", "press",
         "screenshot", "volume", "mute", "shutdown", "restart",
-        "lock", "delete", "create", "make",
+        "lock", "delete", "create", "make", "fill", "signup",
+        "sign up", "register",
         # Urdu actions (Latin + script)
         "kholo", "khol", "band karo", "talash", "dhoondo",
         "chalao", "bajao", "bhejo", "likho", "dabao",
-        "bnao", "banao", "bnawo",
+        "bnao", "banao", "bnawo", "bharo",
         "کھولو", "کھول", "بند", "تلاش", "ڈھونڈ", "چلاؤ",
-        "بجاؤ", "بھیجو", "لکھو", "دباؤ", "بناؤ", "بناو",
+        "بجاؤ", "بھیجو", "لکھو", "دباؤ", "بناؤ", "بناو", "بھرو",
     )
 
     @staticmethod
