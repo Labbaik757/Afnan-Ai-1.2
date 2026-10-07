@@ -2024,14 +2024,23 @@ What do you want me to do?
                 or "براوزر کھولو" in command
             ):
                 self.speak("Opening browser")
-                self._open_url("https://www.google.com")
+                # Automation Chromium, NOT the user's personal browser.
+                self.execute_tool("browser_launch", {})
+                self.execute_tool(
+                    "browser_navigate",
+                    {"url": "https://www.google.com"},
+                )
 
             elif (
                 "youtube kholo" in command
                 or "یوٹیوب کھولو" in command
             ):
                 self.speak("Opening YouTube")
-                self._open_url("https://youtube.com")
+                self.execute_tool("browser_launch", {})
+                self.execute_tool(
+                    "browser_navigate",
+                    {"url": "https://youtube.com"},
+                )
 
             elif "open youtube" in command:
                 self.speak("Opening YouTube")
