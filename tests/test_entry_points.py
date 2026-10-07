@@ -298,5 +298,58 @@ class TestMainHasNoDuplicateLogic(unittest.TestCase):
         self.assertIn("_agent.handle_request", main_src)
 
 
+class TestFacebookSignup(unittest.TestCase):
+    def _agent_with_stub_tools(self):
+        agent, adapter = make_assistant(StubLLM(reply="ok"))
+        calls = []
+
+        class OkResult:
+            ok = True
+
+        def fake_execute(name, arguments=None, **kwargs):
+            calls.append((name, arguments or {}))
+            return OkResult()
+
+        agent.tools.execute = fake_execute
+        return agent, adapter, calls
+
+    def test_signup_trigger_starts_flow(self):
+        agent, adapter, calls = self._agent_with_stub_tools()
+        agent.handle_request("fill facebook signup form")
+        self.assertIsNotNone(agent._signup_state)
+        self.assertEqual(agent._signup_state["idx"], 0)
+        tool_names = [c[0] for c in calls]
+        self.assertIn("browser_navigate", tool_names)
+        # Asked for first name.
+        self.assertTrue(any("first name" in s for s in adapter.spoken))
+
+    def test_signup_fills_fields_step_by_step(self):
+        agent, adapter, calls = self._agent_with_stub_tools()
+        agent.handle_request("facebook signup")
+        agent.handle_request("Afnan")  # first name
+        agent.handle_request("Khan")  # last name
+        type_calls = [c for c in calls if c[0] == "browser_type"]
+        self.assertEqual(len(type_calls), 2)
+        self.assertEqual(type_calls[0][1]["text"], "Afnan")
+        self.assertIn('firstname', type_calls[0][1]["selector"])
+        self.assertEqual(type_calls[1][1]["text"], "Khan")
+        # Now asking for email.
+        self.assertTrue(any("Email" in s for s in adapter.spoken))
+
+    def test_signup_cancel(self):
+        agent, adapter, calls = self._agent_with_stub_tools()
+        agent.handle_request("facebook signup")
+        agent.handle_request("cancel")
+        self.assertIsNone(agent._signup_state)
+
+    def test_is_signup_request(self):
+        self.assertTrue(
+            AfnanAgent._is_signup_request("fill facebook signup form"))
+        self.assertTrue(
+            AfnanAgent._is_signup_request("facebook account banao"))
+        self.assertFalse(
+            AfnanAgent._is_signup_request("open facebook"))
+
+
 if __name__ == "__main__":
     unittest.main()
