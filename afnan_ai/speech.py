@@ -147,5 +147,10 @@ def _speak_with_pyttsx3(text: str) -> None:
 
     if _engine is None:
         _engine = pyttsx3.init()
+        # Some systems start pyttsx3 nearly muted; force full volume.
+        try:
+            _engine.setProperty("volume", 1.0)
+        except Exception:
+            pass
     _engine.say(text)
     _engine.runAndWait()
