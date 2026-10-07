@@ -171,6 +171,33 @@ class TtsChainTests(unittest.TestCase):
             speech_module.speak("hello", adapter)
         self.assertEqual(adapter.spoken, ["hello"])
 
+    def test_system_speech_preferred_when_adapter_prefers(self):
+        class PreferAdapter:
+            prefers_system_speech = True
+
+            def __init__(self):
+                self.spoken = []
+
+            def speak_system(self, text):
+                self.spoken.append(text)
+
+        adapter = PreferAdapter()
+        with mock.patch.object(
+            speech_module, "_speak_with_pyttsx3",
+            side_effect=AssertionError("pyttsx3 must not be tried"),
+        ):
+            speech_module.speak("hello boss", adapter)
+        self.assertEqual(adapter.spoken, ["hello boss"])
+
+    def test_pyttsx3_still_used_without_preference(self):
+        adapter = self._fake_adapter()
+        with mock.patch.object(
+            speech_module, "_speak_with_pyttsx3", return_value=None
+        ) as pyttsx3_mock:
+            speech_module.speak("hello", adapter)
+        pyttsx3_mock.assert_called_once_with("hello")
+        self.assertEqual(adapter.spoken, [])
+
 
 class ConfigTests(unittest.TestCase):
     def test_defaults(self):
