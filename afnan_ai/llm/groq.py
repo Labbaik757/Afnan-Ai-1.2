@@ -21,7 +21,19 @@ from afnan_ai.llm.base import (
 )
 
 _API_URL = "https://api.groq.com/openai/v1/chat/completions"
-_DEFAULT_MODEL = "llama-3.3-70b-versatile"
+_MODELS_URL = "https://api.groq.com/openai/v1/models"
+# Preferred big models, in order.  Resolved against the live
+# /models endpoint so retired names never break us.
+_PREFERRED_MODELS = (
+    "llama-3.3-70b-versatile",
+    "llama-3.1-70b-versatile",
+    "llama3-70b-8192",
+    "llama-3.1-8b-instant",
+    "llama3-8b-8192",
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it",
+)
+_DEFAULT_MODEL = "llama-3.1-8b-instant"  # last-resort fallback
 _TIMEOUT = 60
 
 
@@ -41,6 +53,38 @@ class GroqProvider(LLMProvider):
         self.api_key = (
             api_key or os.environ.get("AFNAN_GROQ_API_KEY", "")
         ).strip()
+        self._model_resolved = False
+
+    def _resolve_model(self) -> None:
+        """Pick the best available model from the live endpoint.
+
+        Runs once; retired model names fall back gracefully instead
+        of 404ing on every call.
+        """
+        if self._model_resolved:
+            return
+        self._model_resolved = True
+        # If the user pinned a specific model, trust it.
+        if os.environ.get("AFNAN_GROQ_MODEL"):
+            self.model = os.environ["AFNAN_GROQ_MODEL"].strip()
+            return
+        try:
+            req = urllib.request.Request(
+                _MODELS_URL, headers=self._headers(), method="GET")
+            with urllib.request.urlopen(req,
+                                        timeout=_TIMEOUT) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            available = {
+                m.get("id", "") for m in body.get("data", [])
+            }
+            for candidate in _PREFERRED_MODELS:
+                if candidate in available:
+                    self.model = candidate
+                    return
+            # Requested default gone and nothing preferred: keep
+            # constructor default; the API will say what's wrong.
+        except Exception:
+            pass  # offline / blocked: try the default anyway
 
     @property
     def is_available(self) -> bool:
@@ -86,6 +130,7 @@ class GroqProvider(LLMProvider):
             ) from e
 
     def chat(self, messages: Sequence[ChatMessage]) -> str:
+        self._resolve_model()
         body = self._post({
             "model": self.model,
             "messages": [dict(m) for m in messages],
@@ -100,6 +145,7 @@ class GroqProvider(LLMProvider):
     def chat_stream(
         self, messages: Sequence[ChatMessage]
     ) -> Iterator[str]:
+        self._resolve_model()
         data = json.dumps({
             "model": self.model,
             "messages": [dict(m) for m in messages],
