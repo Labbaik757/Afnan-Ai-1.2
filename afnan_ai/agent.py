@@ -224,11 +224,21 @@ class AfnanAgent:
             perception = getattr(self.browser, "perception", None)
             if perception is not None:
                 perception.screen_observer = self.screen_observer
+        # Central configuration (wake word, limits, default
+        # model...).  Explicit arguments win over the config.
+        # Resolved early: the LLM provider below needs the model/host.
+        self.config = config or AgentConfig()
         # The agent talks to a model only through the LLMProvider
         # interface.  By default that is the local Ollama provider
         # (llama3), exactly as before; pass any other provider
         # (local or cloud) and no agent code changes.
-        self.llm: LLMProvider = llm_provider or get_default_provider()
+        # Model and host come from the config so AFNAN_LLM_MODEL /
+        # AFNAN_LLM_HOST can switch them without code changes
+        # (e.g. a remote Ollama with a GPU, like Google Colab).
+        self.llm: LLMProvider = llm_provider or get_default_provider(
+            model=self.config.llm_model,
+            host=self.config.llm_host,
+        )
         # Backwards-compatible alias
         self.llm_provider = self.llm
         # Planner uses the same LLM + tools, but only ever plans —
@@ -261,9 +271,7 @@ class AfnanAgent:
         # complete task lifecycle (goal → plan → step-by-step
         # execute/verify → completion), capped by max_iterations.
         # Voice commands keep their existing direct behaviour.
-        # Central configuration (wake word, limits, default
-        # model...).  Explicit arguments win over the config.
-        self.config = config or AgentConfig()
+        # (self.config was resolved earlier, before the LLM provider.)
         resolved_iterations = (
             max_iterations
             if max_iterations is not None
@@ -1419,34 +1427,15 @@ class AfnanAgent:
             html_file = "afnan_animation.html"
             with open(html_file, "w", encoding="utf-8") as f:
                 f.write(html_content)
-            self._open_animation_window(
+            # Standalone app-like window via the platform adapter
+            # (Chrome --app mode on Windows, default browser else).
+            self.adapter.open_app_window(
                 Path(os.path.abspath(html_file)).as_uri()
             )
             print("✅ Afnan AI animation opened in app window")
         except Exception as e:
             print(f"❌ GIF Error: {e}")
             print("💡 Continuing without animation...")
-
-    def _open_animation_window(self, uri: str) -> None:
-        """Open the animation as a standalone app window.
-
-        Launches the system Chrome/Chromium in app mode (no tabs
-        or address bar) so Afnan feels like its own desktop app.
-        Falls back to the default browser when no Chromium-family
-        browser is found.
-        """
-        try:
-            from afnan_ai.browser.chromium_adapter import (
-                ChromiumAdapter,
-            )
-            exe = ChromiumAdapter.find_executable("chromium")
-        except Exception:
-            exe = None
-        if exe:
-            import subprocess
-            subprocess.Popen([exe, f"--app={uri}"])
-        else:
-            webbrowser.open(uri)
 
     # -- introduction ----------------------------------------------------
     def introduce_yourself(self) -> None:
