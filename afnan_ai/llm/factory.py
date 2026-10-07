@@ -60,12 +60,12 @@ def get_default_provider(**kwargs: Any) -> LLMProvider:
             f"Unknown LLM provider {name!r}. "
             f"Available providers: {', '.join(available_providers())}"
         )
-    # Groq takes model + api_key, not host.
+    # Groq takes model + api_key, not host.  Model resolution
+    # happens against the live /models endpoint; just clear the
+    # local-only names here.
     if provider_cls is GroqProvider:
         kwargs.pop("host", None)
         kwargs["api_key"] = os.environ.get("AFNAN_GROQ_API_KEY", "")
-        if not kwargs.get("model") or kwargs["model"] in (
-            "llama3", "llama3.2:1b",
-        ):
-            kwargs["model"] = "llama-3.3-70b-versatile"
+        if kwargs.get("model") in ("llama3", "llama3.2:1b"):
+            kwargs.pop("model", None)  # let Groq pick the best
     return provider_cls(**kwargs)
