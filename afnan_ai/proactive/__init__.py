@@ -26,10 +26,24 @@ from afnan_ai.proactive.models import (
     IdeaStatus,
     SuggestionType,
 )
+from afnan_ai.proactive.nudges import (
+    DIALS,
+    PRIORITIES,
+    TLOS_TEMPLATE,
+    Nudge,
+    TlosNudgeEngine,
+    ensure_tlos,
+    lookup_scan_engine,
+    register_proactive_scan,
+)
 
 __all__ = [
+    "DIALS",
+    "PRIORITIES",
+    "TLOS_TEMPLATE",
     "Idea",
     "IdeaStatus",
+    "Nudge",
     "ProactiveConfig",
     "ProactiveEngine",
     "ProactiveError",
@@ -38,4 +52,8 @@ __all__ = [
     "RISK_REVERSIBLE",
     "RISK_SENSITIVE",
     "SuggestionType",
+    "TlosNudgeEngine",
+    "ensure_tlos",
+    "lookup_scan_engine",
+    "register_proactive_scan",
 ]
