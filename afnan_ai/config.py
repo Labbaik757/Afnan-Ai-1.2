@@ -96,6 +96,10 @@ class AgentConfig:
     #: Speak LLM replies sentence-by-sentence while they generate
     #: instead of waiting for the full reply first.
     stream_responses: bool = True
+    #: Fast path for simple commands: known direct commands and
+    #: chitchat are handled instantly without LLM planning, which
+    #: matters on slow hardware where planning takes minutes.
+    fast_path: bool = True
     #: Neural voice for Urdu TTS (edge-tts, no account).
     tts_urdu_voice: str = "ur-PK-GulNawazNeural"
     max_iterations: int = 10
@@ -144,6 +148,10 @@ class AgentConfig:
             stream_responses=_bool_from_env(
                 f"{prefix}STREAM_RESPONSES",
                 defaults.stream_responses,
+            ),
+            fast_path=_bool_from_env(
+                f"{prefix}FAST_PATH",
+                defaults.fast_path,
             ),
             tts_urdu_voice=os.environ.get(
                 f"{prefix}TTS_URDU_VOICE", defaults.tts_urdu_voice
