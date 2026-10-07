@@ -26,10 +26,15 @@ class FakeClient:
         self.error = error
         self.calls = []
 
-    def chat(self, model, messages):
-        self.calls.append({"model": model, "messages": messages})
+    def chat(self, model, messages, stream=False):
+        self.calls.append(
+            {"model": model, "messages": messages, "stream": stream}
+        )
         if self.error is not None:
             raise self.error
+        if stream:
+            content = self.response["message"]["content"]
+            return iter([{"message": {"content": content}}])
         return self.response
 
 
@@ -240,6 +245,82 @@ class TestProviderInterface(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         src = (root / "afnan_ai" / "llm" / "ollama.py").read_text(encoding="utf-8")
         self.assertIn("import ollama", src)
+
+
+class FakeStreamClient:
+    """Stand-in for the ollama client in stream=True mode."""
+
+    def __init__(self, chunks=None, error=None):
+        self.chunks = list(chunks or [])
+        self.error = error
+        self.calls = []
+
+    def chat(self, model, messages, stream=False):
+        self.calls.append(
+            {"model": model, "messages": messages, "stream": stream}
+        )
+        if self.error is not None:
+            raise self.error
+        return iter(self.chunks)
+
+
+class TestChatStream(unittest.TestCase):
+    def test_ollama_chat_stream_yields_chunks(self):
+        client = FakeStreamClient(
+            chunks=[
+                {"message": {"content": "Hello "}},
+                {"message": {"content": "boss."}},
+                {"message": {"content": ""}, "done": True},
+            ]
+        )
+        provider = OllamaProvider(client=client)
+        chunks = list(
+            provider.chat_stream([{"role": "user", "content": "hi"}])
+        )
+        self.assertEqual(chunks, ["Hello ", "boss."])
+        self.assertTrue(client.calls[0]["stream"])
+        self.assertEqual(client.calls[0]["model"], "llama3")
+
+    def test_ollama_chat_stream_skips_empty_chunks(self):
+        client = FakeStreamClient(
+            chunks=[
+                {"message": {"content": ""}},
+                {"message": {}},
+                {"message": {"content": "hi"}},
+            ]
+        )
+        provider = OllamaProvider(client=client)
+        self.assertEqual(
+            list(provider.chat_stream([{"role": "user", "content": "x"}])),
+            ["hi"],
+        )
+
+    def test_ollama_chat_stream_no_content_raises(self):
+        client = FakeStreamClient(
+            chunks=[{"message": {"content": ""}}, {"done": True}]
+        )
+        provider = OllamaProvider(client=client)
+        with self.assertRaises(LLMInvalidResponseError):
+            list(provider.chat_stream([{"role": "user", "content": "x"}]))
+
+    def test_ollama_chat_stream_connection_error(self):
+        client = FakeStreamClient(error=ConnectionRefusedError("nope"))
+        provider = OllamaProvider(client=client)
+        with self.assertRaises(LLMConnectionError):
+            list(provider.chat_stream([{"role": "user", "content": "x"}]))
+
+    def test_base_chat_stream_default_yields_full_reply(self):
+        class EchoProvider(LLMProvider):
+            name = "echo"
+
+            def chat(self, messages):
+                return "full reply"
+
+        provider = EchoProvider()
+        self.assertEqual(
+            list(provider.chat_stream([{"role": "user", "content": "x"}])),
+            ["full reply"],
+        )
 
 
 if __name__ == "__main__":
