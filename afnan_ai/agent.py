@@ -1684,7 +1684,17 @@ What do you want me to do?
             self._handle_legacy_command(lowered)
             return None
 
-        # 2) Delegate the actual task to the central Agent.  The
+        # 2) Fast path (config): known direct commands and chitchat
+        # skip LLM planning entirely — instant on slow hardware
+        # where planning a trivial command takes minutes.
+        if self.config.fast_path:
+            if self._handle_legacy_command(lowered):
+                return None
+            if self._is_chitchat(lowered):
+                self._legacy_chat_fallback(lowered)
+                return None
+
+        # 3) Delegate the actual task to the central Agent.  The
         # orchestrator runs with its own task state; the assistant's
         # session state is only adopted once a plan actually
         # exists, so a planning failure (e.g. model offline) leaves
@@ -1736,7 +1746,15 @@ What do you want me to do?
             or "open google chrome" in command
             or "open edge" in command
             or "open microsoft edge" in command
+            or "open browser" in command
+            or "browser kholo" in command
+            or "browser open karo" in command
+            or "براؤزر کھولو" in command
+            or "براؤزر اوپن کرو" in command
+            or "براوزر کھولو" in command
             or "open youtube" in command
+            or "youtube kholo" in command
+            or "یوٹیوب کھولو" in command
             or "open whatsapp" in command
             or "tell me about yourself" in command
             or "introduce yourself" in command
@@ -1748,6 +1766,12 @@ What do you want me to do?
             or "screenshot" in command
             or "stop afnan" in command
         )
+
+    @staticmethod
+    def _is_chitchat(command: str) -> bool:
+        """True for greetings/small talk: answered directly by the
+        LLM with no planning overhead."""
+        return any(p in command for p in AfnanAgent._CHAT_PATTERNS)
 
     def _handle_legacy_command(self, command: str) -> bool:
         """Run one legacy direct command.  Returns True when a
@@ -1782,6 +1806,24 @@ What do you want me to do?
                 self.speak("Opening Microsoft Edge")
                 if not self._open_application("edge"):
                     self.speak("Microsoft Edge not found boss")
+
+            elif (
+                "open browser" in command
+                or "browser kholo" in command
+                or "browser open karo" in command
+                or "براؤزر کھولو" in command
+                or "براؤزر اوپن کرو" in command
+                or "براوزر کھولو" in command
+            ):
+                self.speak("Opening browser")
+                self._open_url("https://www.google.com")
+
+            elif (
+                "youtube kholo" in command
+                or "یوٹیوب کھولو" in command
+            ):
+                self.speak("Opening YouTube")
+                self._open_url("https://youtube.com")
 
             elif "open youtube" in command:
                 self.speak("Opening YouTube")
@@ -1857,6 +1899,31 @@ What do you want me to do?
     # Phrases that end conversation mode and return to the
     # wake-word loop.
     _GOODBYE_PHRASES = (
+        "khuda hafiz",
+        "alvida",
+        "goodbye",
+    )
+    # Chitchat: answered directly by the LLM without planning.
+    # Keeps greetings and small talk instant on slow hardware.
+    _CHAT_PATTERNS = (
+        "assalam",
+        "salam",
+        "hello",
+        "aoa",
+        "kya haal",
+        "kia haal",
+        "kesay ho",
+        "kese ho",
+        "kaisay ho",
+        "kaise ho",
+        "how are you",
+        "کیا حال",
+        "کیسے ہو",
+        "کیسی ہو",
+        "shukriya",
+        "شکریہ",
+        "thanks",
+        "thank you",
         "khuda hafiz",
         "alvida",
         "goodbye",
