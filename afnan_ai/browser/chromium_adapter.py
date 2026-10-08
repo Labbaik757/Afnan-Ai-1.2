@@ -594,22 +594,22 @@ class ChromiumAdapter(BrowserEngineAdapter):
             process = subprocess.Popen(args, **popen_kwargs)
             state.process = process
             deadline = time.monotonic() + 20.0
+            exited_code: int | None = None
+            stderr_tail = ""
             while time.monotonic() < deadline:
-                if process.poll() is not None:
+                # NOTE: do NOT fail fast when the launcher process
+                # exits — Chrome's initial process often exits 0 after
+                # handing off to its child processes.  Keep polling
+                # the debug port until the deadline; only fail if the
+                # port never comes up.
+                if exited_code is None and process.poll() is not None:
+                    exited_code = process.returncode
                     try:
                         _, stderr_out = process.communicate(timeout=2)
                     except Exception:
                         stderr_out = ""
-                    stderr_tail = (stderr_out or "").strip().splitlines()
-                    stderr_tail = "\n".join(stderr_tail[-15:])
-                    last_error = (
-                        f"Chromium exited with code "
-                        f"{process.returncode} (profile "
-                        f"{state.name!r} may be locked or corrupted)"
-                        + (f"\nChromium stderr:\n{stderr_tail}"
-                           if stderr_tail else "")
-                    )
-                    break
+                    lines = (stderr_out or "").strip().splitlines()
+                    stderr_tail = "\n".join(lines[-15:])
                 try:
                     with urllib.request.urlopen(
                         f"http://127.0.0.1:{port}/json/version",
@@ -624,7 +624,16 @@ class ChromiumAdapter(BrowserEngineAdapter):
                 except Exception:
                     time.sleep(0.15)
             else:
-                last_error = "Chromium did not open its debug port"
+                if exited_code is not None:
+                    last_error = (
+                        f"Chromium exited with code "
+                        f"{exited_code} (profile "
+                        f"{state.name!r} may be locked or corrupted)"
+                        + (f"\nChromium stderr:\n{stderr_tail}"
+                           if stderr_tail else "")
+                    )
+                else:
+                    last_error = "Chromium did not open its debug port"
             try:
                 process.terminate()
             except Exception:
