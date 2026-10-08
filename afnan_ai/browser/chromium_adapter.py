@@ -34,6 +34,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -569,12 +570,28 @@ class ChromiumAdapter(BrowserEngineAdapter):
             args.append("about:blank")
             # Capture stderr (not DEVNULL) so a startup crash tells us
             # WHY instead of the generic "exited with code 0".
-            process = subprocess.Popen(
-                args,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
+            # Windows: DETACHED_PROCESS + NEW_PROCESS_GROUP makes the
+            # GUI browser launch like PowerShell's `&` does — a plain
+            # console-child Popen exits instantly with code 0 on some
+            # systems (the exact failure seen on the user's PC while
+            # the identical manual PowerShell command works fine).
+            popen_kwargs: dict[str, Any] = {
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.PIPE,
+                "text": True,
+                "stdin": subprocess.DEVNULL,
+            }
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = (
+                    subprocess.DETACHED_PROCESS
+                    | subprocess.CREATE_NEW_PROCESS_GROUP
+                )
+                # With DETACHED_PROCESS the child can't inherit our
+                # console stdio; DEVNULL keeps the handles valid.
+                # stderr=PIPE still captures startup errors because
+                # the pipe handle itself is inherited.
+                popen_kwargs["close_fds"] = False
+            process = subprocess.Popen(args, **popen_kwargs)
             state.process = process
             deadline = time.monotonic() + 20.0
             while time.monotonic() < deadline:
