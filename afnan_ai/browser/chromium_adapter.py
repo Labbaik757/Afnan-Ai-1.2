@@ -34,7 +34,6 @@ import os
 import shutil
 import socket
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.request
@@ -568,34 +567,17 @@ class ChromiumAdapter(BrowserEngineAdapter):
             if headless_flag:
                 args.append(headless_flag)
             args.append("about:blank")
-            # Capture stderr (not DEVNULL) so a startup crash tells us
-            # WHY instead of the generic "exited with code 0".
-            # Windows: DETACHED_PROCESS + NEW_PROCESS_GROUP makes the
-            # GUI browser launch like PowerShell's `&` does — a plain
-            # console-child Popen exits instantly with code 0 on some
-            # systems (the exact failure seen on the user's PC while
-            # the identical manual PowerShell command works fine).
-            popen_kwargs: dict[str, Any] = {
-                "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.PIPE,
-                "text": True,
-                "stdin": subprocess.DEVNULL,
-            }
-            if sys.platform == "win32":
-                popen_kwargs["creationflags"] = (
-                    subprocess.DETACHED_PROCESS
-                    | subprocess.CREATE_NEW_PROCESS_GROUP
-                )
-                # With DETACHED_PROCESS the child can't inherit our
-                # console stdio; DEVNULL keeps the handles valid.
-                # stderr=PIPE still captures startup errors because
-                # the pipe handle itself is inherited.
-                popen_kwargs["close_fds"] = False
-            process = subprocess.Popen(args, **popen_kwargs)
+            # Bisect-proven on the user's PC (2026-10-08): EVERY
+            # Popen variant with redirected stdio exits 0 instantly,
+            # while os.system()/cmd-style launch (inherited stdio)
+            # works and the debug port goes live.  So: inherit stdio
+            # like cmd.exe does — no DEVNULL, no PIPE, no text mode.
+            # The debug-port poll below is the real health check, not
+            # the process exit code.
+            process = subprocess.Popen(args)
             state.process = process
             deadline = time.monotonic() + 20.0
             exited_code: int | None = None
-            stderr_tail = ""
             while time.monotonic() < deadline:
                 # NOTE: do NOT fail fast when the launcher process
                 # exits — Chrome's initial process often exits 0 after
@@ -604,12 +586,8 @@ class ChromiumAdapter(BrowserEngineAdapter):
                 # port never comes up.
                 if exited_code is None and process.poll() is not None:
                     exited_code = process.returncode
-                    try:
-                        _, stderr_out = process.communicate(timeout=2)
-                    except Exception:
-                        stderr_out = ""
-                    lines = (stderr_out or "").strip().splitlines()
-                    stderr_tail = "\n".join(lines[-15:])
+                    # No stderr capture (stdio is inherited, not piped)
+                    # — the debug-port poll is the health check.
                 try:
                     with urllib.request.urlopen(
                         f"http://127.0.0.1:{port}/json/version",
@@ -627,10 +605,9 @@ class ChromiumAdapter(BrowserEngineAdapter):
                 if exited_code is not None:
                     last_error = (
                         f"Chromium exited with code "
-                        f"{exited_code} (profile "
+                        f"{exited_code} and the debug port "
+                        f"{port} never opened (profile "
                         f"{state.name!r} may be locked or corrupted)"
-                        + (f"\nChromium stderr:\n{stderr_tail}"
-                           if stderr_tail else "")
                     )
                 else:
                     last_error = "Chromium did not open its debug port"
