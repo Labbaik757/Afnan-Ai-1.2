@@ -2025,22 +2025,44 @@ What do you want me to do?
             ):
                 self.speak("Opening browser")
                 # Automation Chromium, NOT the user's personal browser.
-                self.execute_tool("browser_launch", {})
-                self.execute_tool(
+                launch_result = self.execute_tool("browser_launch", {})
+                if not launch_result.success:
+                    err = (launch_result.error.message
+                           if launch_result.error else "unknown error")
+                    self.speak(f"Browser nahin khul saka boss: {err}")
+                    return
+                nav_result = self.execute_tool(
                     "browser_navigate",
                     {"url": "https://www.google.com"},
                 )
+                if not nav_result.success:
+                    err = (nav_result.error.message
+                           if nav_result.error else "unknown error")
+                    self.speak(f"Browser khul gaya lekin page nahin khula: {err}")
+                    return
+                self.speak("Browser khul gaya boss")
 
             elif (
                 "youtube kholo" in command
                 or "یوٹیوب کھولو" in command
             ):
                 self.speak("Opening YouTube")
-                self.execute_tool("browser_launch", {})
-                self.execute_tool(
+                launch_result = self.execute_tool("browser_launch", {})
+                if not launch_result.success:
+                    err = (launch_result.error.message
+                           if launch_result.error else "unknown error")
+                    self.speak(f"Browser nahin khul saka boss: {err}")
+                    return
+                nav_result = self.execute_tool(
                     "browser_navigate",
                     {"url": "https://youtube.com"},
                 )
+                if not nav_result.success:
+                    err = (nav_result.error.message
+                           if nav_result.error else "unknown error")
+                    self.speak(f"Browser khul gaya lekin YouTube nahin khula: {err}")
+                    return
+                self.speak("YouTube khul gaya boss")
 
             elif "open youtube" in command:
                 self.speak("Opening YouTube")
