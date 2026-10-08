@@ -119,5 +119,79 @@ class TestCoreHasNoOsSpecificCode(unittest.TestCase):
             )
 
 
+class TestHeardTextNormalization(unittest.TestCase):
+    """STT transcripts carry invisible characters (Urdu STT inserts
+    zero-width joiners between words). They look identical on the
+    console but used to fail every legacy substring match, silently
+    sending the command down the slow LLM planning path."""
+
+    def test_normalize_turns_zero_width_separators_into_spaces(self):
+        from afnan_ai.agent import _normalize_command_text
+
+        self.assertEqual(
+            _normalize_command_text("براؤزر‌اوپن‌کرو"),
+            "براؤزر اوپن کرو",
+        )
+        self.assertEqual(
+            _normalize_command_text("براؤزر​اوپن​کرو"),
+            "براؤزر اوپن کرو",
+        )
+
+    def test_normalize_collapses_whitespace_and_bom(self):
+        from afnan_ai.agent import _normalize_command_text
+
+        self.assertEqual(
+            _normalize_command_text("﻿  open   browser  "),
+            "open browser",
+        )
+        self.assertEqual(_normalize_command_text(""), "")
+        self.assertEqual(_normalize_command_text(None), "")
+
+    def test_urdu_browser_command_with_zwnj_takes_legacy_path(self):
+        agent = make_agent()
+        # If normalization regresses, the command falls through to
+        # the orchestrator instead of the instant legacy handler.
+        agent.orchestrator.run = mock.Mock(
+            side_effect=AssertionError("must not reach LLM planning")
+        )
+        from afnan_ai.tools.base import ToolResult
+        with mock.patch.object(
+            agent, "execute_tool",
+            return_value=ToolResult.ok("browser_launch")
+        ) as et:
+            agent.process_command("براؤزر‌اوپن‌کرو")  # U+200C between words
+            et.assert_called()
+            calls = [c.args[0] for c in et.call_args_list]
+            self.assertIn("browser_launch", calls)
+            self.assertIn("browser_navigate", calls)
+        self.assertIn("Opening browser", agent.adapter.spoken)
+
+    def test_plain_urdu_browser_command_still_works(self):
+        agent = make_agent()
+        from afnan_ai.tools.base import ToolResult
+        with mock.patch.object(
+            agent, "execute_tool",
+            return_value=ToolResult.ok("browser_launch")
+        ) as et:
+            agent.process_command("براؤزر اوپن کرو")
+            et.assert_called()
+        self.assertIn("Opening browser", agent.adapter.spoken)
+
+    def test_browser_launch_failure_is_spoken(self):
+        agent = make_agent()
+        from afnan_ai.tools.base import ToolResult, ToolError, ToolErrorCode
+        with mock.patch.object(
+            agent, "execute_tool",
+            return_value=ToolResult.fail(
+                "browser_launch",
+                ToolError(ToolErrorCode.EXECUTION_FAILED,
+                          "launch failed", tool="browser_launch"))
+        ):
+            agent.process_command("open browser")
+        self.assertTrue(
+            any("nahin khul saka" in s for s in agent.adapter.spoken),
+            f"expected failure message, got: {agent.adapter.spoken}")
+
+
 if __name__ == "__main__":
     unittest.main()
