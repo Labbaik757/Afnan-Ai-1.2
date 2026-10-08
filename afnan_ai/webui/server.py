@@ -59,7 +59,7 @@ def _safe_call(fn: Callable[[], Any]) -> dict[str, Any]:
 class WebUIServer:
     """HTTP + SSE backend for the Afnan web interface."""
 
-    def __init__(self, agent: Any, port: int = 8765,
+    def __init__(self, agent: Any, port: int = 5000,
                  static_dir: str | Path | None = None) -> None:
         self.agent = agent
         self.port = int(port)
@@ -628,6 +628,6 @@ class _RequestHandler(BaseHTTPRequestHandler):
 
 
 def create_server(agent: Any,
-                  port: int = 8765) -> WebUIServer:
+                  port: int = 5000) -> WebUIServer:
     """Build (but do not start) a Web UI server for *agent*."""
     return WebUIServer(agent, port=port)
